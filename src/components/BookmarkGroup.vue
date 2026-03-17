@@ -1,5 +1,6 @@
 <script setup>
-import { computed } from 'vue'
+import { computed, ref, watch } from 'vue'
+import { getThumbnailForUrl } from '../utils/thumbnailCache'
 
 const props = defineProps({
   nodes: {
@@ -16,26 +17,25 @@ const depth = computed(() => props.depth || 0)
 const indent = computed(() => `${depth.value * 12}px`)
 
 const hasChildren = (node) => Boolean(node.children && node.children.length)
-const getScreenshot = (url) => {
-  if (!url) return ''
-  return `https://image.thum.io/get/width/320/crop/200/noanimate/${encodeURIComponent(url)}`
-}
+const thumbMap = ref({})
 
-const getFavicon = (url) => {
-  if (!url) return ''
-  return `https://www.google.com/s2/favicons?sz=128&domain_url=${encodeURIComponent(url)}`
-}
-
-const onThumbError = (event, url) => {
-  const img = event.target
-  if (!img || !url) return
-  if (img.dataset.fallback === '1') {
-    img.style.display = 'none'
-    return
+const loadThumb = async (node) => {
+  if (!node?.url) return
+  const src = await getThumbnailForUrl(node.url)
+  if (src) {
+    thumbMap.value[node.id] = src
   }
-  img.dataset.fallback = '1'
-  img.src = getFavicon(url)
 }
+
+watch(
+  () => props.nodes,
+  (nodes) => {
+    for (const node of nodes || []) {
+      loadThumb(node)
+    }
+  },
+  { immediate: true }
+)
 </script>
 
 <template>
@@ -44,14 +44,14 @@ const onThumbError = (event, url) => {
       <div class="bookmark-row" :class="{ folder: hasChildren(node) }">
         <div class="bookmark-content">
           <img
-            v-if="node.url"
+            v-if="node.url && thumbMap[node.id]"
             class="bookmark-thumb"
-            :src="getScreenshot(node.url)"
+            :src="thumbMap[node.id]"
             :alt="node.title || '缩略图'"
             loading="lazy"
             decoding="async"
-            @error="(event) => onThumbError(event, node.url)"
           />
+          <div v-else-if="node.url" class="bookmark-thumb thumb-placeholder">...</div>
           <div v-else class="bookmark-thumb folder-thumb">DIR</div>
           <span class="bookmark-dot" :class="{ folder: hasChildren(node) }"></span>
           <div class="bookmark-text">
@@ -122,6 +122,16 @@ const onThumbError = (event, url) => {
   font-weight: 700;
   color: #1d4ed8;
   background: linear-gradient(180deg, #eaf3ff 0%, #f8fbff 100%);
+}
+
+.thumb-placeholder {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #64748b;
+  font-size: 12px;
+  font-weight: 600;
+  background: #f1f5f9;
 }
 
 .bookmark-content:hover {
