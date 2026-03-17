@@ -50,32 +50,55 @@ const loading = ref(true)
 const status = ref('正在加载书签……')
 const warning = ref('')
 
-const summarizeTree = (nodes) => {
-  return nodes.reduce(
-    (acc, node) => {
-      if (node?.children?.length) {
-        acc.folders += 1
-        const childSummary = summarizeTree(node.children)
-        acc.folders += childSummary.folders
-        acc.bookmarks += childSummary.bookmarks
-      } else if (node?.url) {
-        acc.bookmarks += 1
-      }
-      return acc
-    },
-    { folders: 0, bookmarks: 0 }
-  )
-}
+const hasChildren = (node) => Boolean(node?.children?.length)
+const groupedModules = computed(() => {
+  const modules = []
+  const loose = []
 
-const summary = computed(() => summarizeTree(bookmarkTree.value))
+  for (const node of bookmarkTree.value) {
+    if (hasChildren(node)) {
+      modules.push({
+        id: `module-${node.id}`,
+        title: node.title || '未命名目录',
+        nodes: node.children
+      })
+    } else {
+      loose.push(node)
+    }
+  }
+
+  if (loose.length) {
+    modules.push({
+      id: 'module-ungrouped',
+      title: '未分类',
+      nodes: loose
+    })
+  }
+
+  if (!modules.length && bookmarkTree.value.length) {
+    modules.push({
+      id: 'module-all',
+      title: '全部书签',
+      nodes: bookmarkTree.value
+    })
+  }
+
+  return modules
+})
 
 const hasChromeBookmarks = () => typeof window !== 'undefined' && Boolean(window.chrome?.bookmarks)
+const isBookmarkBar = (node) => {
+  if (!node) return false
+  if (String(node.id) === '1') return true
+  const title = (node.title || '').toLowerCase()
+  return ['书签栏', 'bookmarks bar', 'bookmark bar'].includes(title)
+}
 
 const loadBookmarks = () => {
   if (!hasChromeBookmarks()) {
     status.value = 'Chrome 书签接口暂不可用，展示演示数据。'
     warning.value = '请在 Chrome 新标签页里打开此扩展以读取真实书签。'
-    bookmarkTree.value = fallbackTree
+    bookmarkTree.value = fallbackTree[0]?.children || []
     loading.value = false
     return
   }
@@ -84,9 +107,11 @@ const loadBookmarks = () => {
     window.chrome.bookmarks.getTree((tree) => {
       const root = Array.isArray(tree) ? tree[0] : null
       if (root?.children?.length) {
-        bookmarkTree.value = root.children
+        const barNode = root.children.find(isBookmarkBar)
+        bookmarkTree.value = barNode?.children || []
       } else if (Array.isArray(tree)) {
-        bookmarkTree.value = tree
+        const barNode = tree.find(isBookmarkBar)
+        bookmarkTree.value = barNode?.children || []
       }
       loading.value = false
     })
@@ -94,7 +119,7 @@ const loadBookmarks = () => {
     console.error('bookmark fetch failed', error)
     status.value = '读取书签失败，显示演示内容。'
     warning.value = '检查 Chrome 权限后重新打开新标签页即可。'
-    bookmarkTree.value = fallbackTree
+    bookmarkTree.value = fallbackTree[0]?.children || []
     loading.value = false
   }
 }
@@ -104,30 +129,20 @@ onMounted(loadBookmarks)
 
 <template>
   <div class="page-shell">
-    <header class="hero">
-      <p class="eyebrow">Chrome 启动页 · 书签</p>
-      <h1>按目录结构浏览你的书签</h1>
-      <p class="lead">
-        这一页会读取 Chrome 书签树，并以文件夹为单位分组，让你在新标签页里快速找到想看的链接。
-      </p>
-      <div class="hero-stats">
-        <span class="chip">
-          <strong>{{ summary.folders }}</strong>
-          <small>个目录</small>
-        </span>
-        <span class="chip secondary">
-          <strong>{{ summary.bookmarks }}</strong>
-          <small>个书签</small>
-        </span>
-      </div>
-    </header>
     <main class="content">
       <div v-if="loading" class="status">
         <span class="pulse"></span>
         {{ status }}
       </div>
       <p v-if="warning" class="warning">{{ warning }}</p>
-      <BookmarkGroup v-if="!loading && bookmarkTree.length" :nodes="bookmarkTree" />
+      <div v-if="!loading && groupedModules.length" class="modules">
+        <section v-for="module in groupedModules" :key="module.id" class="module-section">
+          <h2 class="module-title">{{ module.title }}</h2>
+          <div class="module-body">
+            <BookmarkGroup :nodes="module.nodes" />
+          </div>
+        </section>
+      </div>
       <p v-else-if="!loading" class="empty">暂无书签，请先在 Chrome 中添加内容。</p>
       <div v-if="!loading" class="footer-note">
         点击书签会在新标签页里打开，文件夹左侧的圆点会帮助你分辨图标。
