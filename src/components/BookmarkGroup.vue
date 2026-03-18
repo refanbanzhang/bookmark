@@ -2,6 +2,8 @@
 import { computed, ref, watch } from 'vue'
 import { getThumbnailForUrl } from '../utils/thumbnailCache'
 
+defineOptions({ name: 'BookmarkGroup' })
+
 const props = defineProps({
   nodes: {
     type: Array,
@@ -10,14 +12,64 @@ const props = defineProps({
   depth: {
     type: Number,
     default: 0
+  },
+  draggingId: {
+    type: [String, Number],
+    default: ''
+  },
+  dropTargetId: {
+    type: [String, Number],
+    default: ''
   }
 })
 
+const emit = defineEmits(['drag-start', 'drag-end', 'drop-node', 'mark-drop-target', 'open-context-menu'])
+
 const depth = computed(() => props.depth || 0)
 const indent = computed(() => `${depth.value * 12}px`)
-
-const hasChildren = (node) => Boolean(node.children && node.children.length)
 const thumbMap = ref({})
+const dragId = computed(() => String(props.draggingId || ''))
+const dropId = computed(() => String(props.dropTargetId || ''))
+
+const hasChildren = (node) => Boolean(node?.children?.length)
+const isDragging = (id) => dragId.value === String(id)
+const isDropTarget = (id) => dropId.value === String(id)
+const dragIndex = computed(() => props.nodes.findIndex((node) => String(node.id) === dragId.value))
+const dropIndex = computed(() => props.nodes.findIndex((node) => String(node.id) === dropId.value))
+const hasDropPreview = computed(() => dragId.value && dropId.value && dropIndex.value >= 0)
+
+const previewClass = (index) => {
+  if (
+    !hasDropPreview.value ||
+    index === dropIndex.value ||
+    index === dragIndex.value
+  ) {
+    return ''
+  }
+
+  if (index < dropIndex.value) {
+    return 'shift-before-drop'
+  }
+
+  return 'shift-after-drop'
+}
+
+const previewStyle = (index) => {
+  if (
+    !hasDropPreview.value ||
+    index === dropIndex.value ||
+    index === dragIndex.value
+  ) {
+    return null
+  }
+
+  const distance = Math.max(1, Math.min(4, Math.abs(index - dropIndex.value)))
+  const direction = index < dropIndex.value ? -1 : 1
+  return {
+    '--preview-x': `${direction * distance * 4}px`,
+    '--preview-y': `${direction * distance * 2}px`
+  }
+}
 
 const loadThumb = async (node) => {
   if (!node?.url) return
@@ -36,13 +88,69 @@ watch(
   },
   { immediate: true }
 )
+
+const onDragStart = (node, event) => {
+  event.dataTransfer?.setData('text/plain', String(node.id))
+  event.dataTransfer?.setDragImage?.(event.currentTarget, 20, 20)
+  emit('drag-start', node.id)
+}
+
+const onDragEnd = () => {
+  emit('drag-end')
+}
+
+const onDragEnter = (node) => {
+  emit('mark-drop-target', node.id)
+}
+
+const onDrop = (node, event) => {
+  if (!hasChildren(node)) {
+    return
+  }
+
+  event.preventDefault()
+  emit('drop-node', event.dataTransfer?.getData('text/plain') || '', node.id)
+}
+
+const onContextMenu = (node, event) => {
+  event.preventDefault()
+  event.stopPropagation()
+  emit('open-context-menu', node, { x: event.clientX, y: event.clientY })
+}
+
+const forwardDragStart = (id) => emit('drag-start', id)
+const forwardDragEnd = () => emit('drag-end')
+const forwardDropNode = (sourceId, targetId) => emit('drop-node', sourceId, targetId)
+const forwardMarkDropTarget = (id) => emit('mark-drop-target', id)
+const forwardOpenContextMenu = (node, point) => emit('open-context-menu', node, point)
 </script>
 
 <template>
   <ul class="bookmark-group" :style="{ marginLeft: indent }">
-    <li v-for="node in nodes" :key="node.id">
-      <div class="bookmark-row" :class="{ folder: hasChildren(node) }">
-        <div class="bookmark-content">
+    <template v-for="(node, index) in nodes" :key="node.id">
+      <li>
+      <div
+        class="bookmark-row"
+        :class="[
+          {
+            folder: hasChildren(node),
+            dragging: isDragging(node.id),
+            'drop-target': isDropTarget(node.id)
+          },
+          previewClass(index)
+        ]"
+        :style="previewStyle(index)"
+      >
+        <div
+          class="bookmark-content"
+          draggable="true"
+          @dragstart="onDragStart(node, $event)"
+          @dragend="onDragEnd"
+          @dragenter.prevent.stop="onDragEnter(node)"
+          @dragover.prevent.stop="onDragEnter(node)"
+          @drop.stop="onDrop(node, $event)"
+          @contextmenu="onContextMenu(node, $event)"
+        >
           <a
             v-if="node.url && thumbMap[node.id]"
             class="bookmark-thumb-link bookmark-thumb-wrap"
@@ -50,6 +158,7 @@ watch(
             target="_blank"
             rel="noreferrer"
             :style="{ '--thumb-bg': `url('${thumbMap[node.id]}')` }"
+            @click.stop
           >
             <img
               class="bookmark-thumb"
@@ -65,12 +174,14 @@ watch(
             :href="node.url"
             target="_blank"
             rel="noreferrer"
+            @click.stop
           >
             ...
           </a>
           <div v-else class="bookmark-thumb folder-thumb">DIR</div>
+
           <div class="bookmark-text">
-            <a v-if="node.url" :href="node.url" target="_blank" rel="noreferrer">
+            <a v-if="node.url" :href="node.url" target="_blank" rel="noreferrer" @click.stop>
               {{ node.title || '未命名书签' }}
             </a>
             <span v-else>{{ node.title || '未命名目录' }}</span>
@@ -81,13 +192,27 @@ watch(
         v-if="hasChildren(node)"
         :nodes="node.children"
         :depth="depth + 1"
+        :dragging-id="draggingId"
+        :drop-target-id="dropTargetId"
+        @drag-start="forwardDragStart"
+        @drag-end="forwardDragEnd"
+        @drop-node="forwardDropNode"
+        @mark-drop-target="forwardMarkDropTarget"
+        @open-context-menu="forwardOpenContextMenu"
       />
-    </li>
+      </li>
+      <li
+        v-if="hasDropPreview && dropIndex === index"
+        class="bookmark-drop-spacer"
+        aria-hidden="true"
+      />
+    </template>
   </ul>
 </template>
 
 <style scoped>
 .bookmark-group {
+  --bookmark-thumb-height: 70px;
   list-style: none;
   margin: 0;
   padding: 0;
@@ -97,11 +222,19 @@ watch(
   gap: 8px;
 }
 
+.bookmark-group :deep(li) {
+  list-style: none;
+}
+
 .bookmark-group > li {
   display: flex;
   flex-direction: column;
   align-items: flex-start;
   gap: 8px;
+}
+
+.bookmark-row {
+  position: relative;
 }
 
 .bookmark-content {
@@ -117,13 +250,52 @@ watch(
   height: 124px;
   padding: 10px;
   box-shadow: var(--bookmark-card-shadow);
-  transition: transform 0.16s ease, border-color 0.16s ease, box-shadow 0.16s ease;
+  transition:
+    transform 0.16s ease,
+    border-color 0.16s ease,
+    box-shadow 0.16s ease,
+    outline-color 0.16s ease;
+  cursor: grab;
+  will-change: transform;
+}
+
+.bookmark-row.dragging .bookmark-content {
+  opacity: 0.28;
+  transform: scale(0.94);
+}
+
+.bookmark-row.drop-target .bookmark-content {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 2px rgba(37, 99, 235, 0.2), var(--bookmark-hover-shadow);
+  transform: translateY(-4px) scale(1.03);
+}
+
+.bookmark-content:hover {
+  transform: translateY(-2px);
+  border-color: var(--bookmark-hover-border);
+  box-shadow: var(--bookmark-hover-shadow);
+}
+
+.bookmark-row.shift-before-drop .bookmark-content {
+  transform: translate(var(--preview-x), var(--preview-y));
+}
+
+.bookmark-row.shift-after-drop .bookmark-content {
+  transform: translate(var(--preview-x), var(--preview-y));
+}
+
+.bookmark-row.folder .bookmark-content {
+  background: var(--folder-card-bg);
+  border-color: var(--folder-card-border);
 }
 
 .bookmark-thumb {
   width: 100%;
-  height: 62px;
-  padding: 6px;
+  height: 100%;
+  display: block;
+  max-width: 100%;
+  max-height: 100%;
+  margin: 0;
   object-fit: contain;
   object-position: center;
   position: relative;
@@ -137,7 +309,11 @@ watch(
 
 .bookmark-thumb-wrap {
   width: 100%;
-  height: 62px;
+  height: var(--bookmark-thumb-height);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 6px;
   border: 1px solid var(--thumb-border);
   box-shadow:
     0 1px 2px rgba(15, 23, 42, 0.06),
@@ -199,17 +375,6 @@ watch(
   background: var(--thumb-placeholder-bg);
 }
 
-.bookmark-content:hover {
-  transform: translateY(-2px);
-  border-color: var(--bookmark-hover-border);
-  box-shadow: var(--bookmark-hover-shadow);
-}
-
-.bookmark-row.folder .bookmark-content {
-  background: var(--folder-card-bg);
-  border-color: var(--folder-card-border);
-}
-
 .bookmark-text {
   min-width: 0;
   width: 100%;
@@ -231,16 +396,27 @@ watch(
   -webkit-line-clamp: 2;
 }
 
-.bookmark-text span {
-  color: var(--bookmark-text);
-}
-
 .bookmark-text a:hover {
   color: var(--bookmark-link-hover);
 }
 
 .bookmark-row.folder .bookmark-text > span:first-child {
   color: var(--folder-title-text);
+}
+
+.bookmark-drop-spacer {
+  width: 124px;
+  height: 124px;
+  border-radius: 3px;
+  border: 1px dashed rgba(37, 99, 235, 0.32);
+  background: rgba(37, 99, 235, 0.06);
+  box-shadow: inset 0 0 0 1px rgba(37, 99, 235, 0.06);
+  opacity: 0.85;
+  transform: scale(0.98);
+  transition:
+    transform 0.16s ease,
+    opacity 0.16s ease,
+    background-color 0.16s ease;
 }
 
 @media (max-width: 768px) {
@@ -250,17 +426,9 @@ watch(
     padding: 8px;
   }
 
-  .bookmark-thumb {
-    height: 48px;
-  }
-
-  .bookmark-thumb-wrap {
-    height: 48px;
-  }
-
   .bookmark-text a,
   .bookmark-text span {
-    display: block;
+    font-size: 12px;
   }
 
 }
