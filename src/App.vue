@@ -20,14 +20,6 @@ const fallbackTree = [
     children: [
       { id: 'b1', title: 'Vue 官方', url: 'https://vuejs.org/' },
       { id: 'b2', title: 'Vite 文档', url: 'https://vitejs.dev/guide/' },
-      {
-        id: 'b3',
-        title: '设计灵感',
-        children: [
-          { id: 'b3-1', title: 'Dribbble', url: 'https://dribbble.com/' },
-          { id: 'b3-2', title: 'Behance', url: 'https://www.behance.net/' }
-        ]
-      }
     ]
   },
   {
@@ -39,19 +31,7 @@ const fallbackTree = [
       {
         id: 'o3',
         title: '生产力工具',
-        children: [
-          { id: 'o3-1', title: 'Notion', url: 'https://www.notion.so/' },
-          { id: 'o3-2', title: 'Miro', url: 'https://miro.com/' }
-        ]
       }
-    ]
-  },
-  {
-    id: 'demo-quick',
-    title: '快速访问',
-    children: [
-      { id: 'q1', title: '邮箱', url: 'https://mail.google.com/' },
-      { id: 'q2', title: '待办', url: 'https://todoist.com/' }
     ]
   }
 ]
