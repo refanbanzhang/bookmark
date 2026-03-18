@@ -1,6 +1,5 @@
 <script setup>
 import { computed, ref, watch } from 'vue'
-import { motion } from 'motion-v'
 import { getThumbnailForUrl } from '../utils/thumbnailCache'
 
 defineOptions({ name: 'BookmarkGroup' })
@@ -32,21 +31,16 @@ const props = defineProps({
   }
 })
 
-const emit = defineEmits([
-  'drag-start',
-  'drag-end',
-  'drop-node',
-  'drop-at-position',
-  'mark-drop-target',
-  'mark-drop-position',
-  'open-context-menu'
-])
+const emit = defineEmits(['open-context-menu'])
 
 const depth = computed(() => props.depth || 0)
 const indent = computed(() => `${depth.value * 12}px`)
+const groupRef = ref(null)
 const thumbMap = ref({})
+const previewStyle = ref(null)
 const dragId = computed(() => String(props.draggingId || ''))
 const dropId = computed(() => String(props.dropTargetId || ''))
+const hasActiveDrag = computed(() => Boolean(dragId.value))
 const parentId = computed(() =>
   props.parentId === null || props.parentId === undefined || props.parentId === ''
     ? null
@@ -78,43 +72,63 @@ const previewIndex = computed(() => {
   return Math.max(0, Math.min(props.nodes.length, Math.trunc(nextIndex)))
 })
 const hasDropPreview = computed(() => previewIndex.value >= 0)
-const rowTransition = {
-  type: 'spring',
-  stiffness: 440,
-  damping: 34,
-  mass: 0.58
+
+const clearPreviewStyle = () => {
+  previewStyle.value = null
 }
-const rowAnimation = (id) => {
-  if (isDragging(id)) {
+
+const getDefaultPreviewSize = () => {
+  if (typeof window === 'undefined') {
+    return 124
+  }
+  return window.innerWidth <= 768 ? 104 : 124
+}
+
+const buildPreviewStyle = (index) => {
+  const container = groupRef.value
+  if (!container) {
+    return null
+  }
+
+  const containerRect = container.getBoundingClientRect()
+  const cards = Array.from(container.querySelectorAll(':scope > li > .bookmark-row > .bookmark-content'))
+  if (!cards.length) {
+    const size = getDefaultPreviewSize()
     return {
-      x: 0,
-      y: 0,
-      scale: 0.93,
-      opacity: 0.24,
-      zIndex: 4
+      left: '0px',
+      top: '0px',
+      width: `${size}px`,
+      height: `${size}px`
     }
   }
 
-  if (isDropTarget(id)) {
+  const gap = 8
+  const firstRect = cards[0].getBoundingClientRect()
+  const previewWidth = cards[0].offsetWidth || firstRect.width
+  const previewHeight = cards[0].offsetHeight || firstRect.height
+  const maxLeft = Math.max(0, container.clientWidth - previewWidth)
+
+  if (index < cards.length) {
+    const rect = cards[index].getBoundingClientRect()
     return {
-      x: 0,
-      y: 0,
-      scale: 1,
-      opacity: 1,
-      zIndex: 3
+      left: `${Math.max(0, Math.min(maxLeft, rect.left - containerRect.left))}px`,
+      top: `${rect.top - containerRect.top}px`,
+      width: `${previewWidth}px`,
+      height: `${previewHeight}px`
     }
   }
+
+  const lastRect = cards[cards.length - 1].getBoundingClientRect()
+  const candidateLeft = lastRect.right - containerRect.left + gap
+  const fitsSameRow = candidateLeft + previewWidth <= container.clientWidth
 
   return {
-    x: 0,
-    y: 0,
-    scale: 1,
-    opacity: 1,
-    zIndex: 1
+    left: `${fitsSameRow ? Math.max(0, Math.min(maxLeft, candidateLeft)) : 0}px`,
+    top: `${fitsSameRow ? lastRect.top - containerRect.top : lastRect.bottom - containerRect.top + gap}px`,
+    width: `${previewWidth}px`,
+    height: `${previewHeight}px`
   }
 }
-
-const rowHover = (id) => (isDragging(id) ? undefined : { y: -2, transition: { duration: 0.12 } })
 
 const loadThumb = async (node) => {
   if (!node?.url) return
@@ -134,199 +148,65 @@ watch(
   { immediate: true }
 )
 
-const onDragStart = (node, event) => {
-  event.dataTransfer?.setData('text/plain', String(node.id))
-  event.dataTransfer?.setDragImage?.(event.currentTarget, 20, 20)
-  emit('drag-start', node.id)
-}
-
-const onDragEnd = () => {
-  emit('drag-end')
-}
-
-const getSourceId = (event) => {
-  const source = event.dataTransfer?.getData('text/plain') || dragId.value
-  return String(source || '')
-}
-
-const getInsertIndex = (event, index) => {
-  const rect = event.currentTarget.getBoundingClientRect()
-  const middle = rect.left + rect.width / 2
-  const deadZone = Math.min(20, rect.width * 0.16)
-  if (event.clientX <= middle - deadZone) {
-    return index
+watch(
+  () => dragId.value,
+  (id) => {
+    if (!id) {
+      clearPreviewStyle()
+    }
   }
-  if (event.clientX >= middle + deadZone) {
-    return index + 1
-  }
+)
 
-  const current = props.dropPosition
-  const currentParent =
-    current?.parentId === null || current?.parentId === undefined || current?.parentId === ''
-      ? null
-      : String(current.parentId)
-  const currentIndex = Number.isFinite(Number(current?.index)) ? Number(current.index) : null
-  if (currentParent === parentId.value && (currentIndex === index || currentIndex === index + 1)) {
-    return currentIndex
-  }
-
-  return index
-}
-
-const isFolderCenterDrop = (node, event) => {
-  if (!hasChildren(node)) {
-    return false
-  }
-
-  const rect = event.currentTarget.getBoundingClientRect()
-  const horizontalPadding = rect.width * 0.22
-  const verticalPadding = rect.height * 0.22
-  const inHorizontalCenter =
-    event.clientX > rect.left + horizontalPadding && event.clientX < rect.right - horizontalPadding
-  const inVerticalCenter =
-    event.clientY > rect.top + verticalPadding && event.clientY < rect.bottom - verticalPadding
-
-  return inHorizontalCenter && inVerticalCenter
-}
-
-const emitDropPosition = (index) => {
-  const nextIndex = Math.max(0, Math.min(props.nodes.length, index))
-  const current = props.dropPosition
-  const currentParent =
-    current?.parentId === null || current?.parentId === undefined || current?.parentId === ''
-      ? null
-      : String(current.parentId)
-  const currentIndex = Number.isFinite(Number(current?.index)) ? Number(current.index) : null
-  if (currentParent === parentId.value && currentIndex === nextIndex) {
-    return
-  }
-  emit('mark-drop-position', parentId.value, nextIndex)
-}
-
-const onNodeDragFeedback = (node, index, event) => {
-  const sourceId = getSourceId(event)
-  if (!sourceId || String(sourceId) === String(node.id)) {
-    return
-  }
-
-  if (isFolderCenterDrop(node, event)) {
-    if (isDropTarget(node.id)) {
+watch(
+  () => previewIndex.value,
+  (index) => {
+    if (index < 0) {
+      clearPreviewStyle()
       return
     }
-    emit('mark-drop-target', node.id)
-    return
+    previewStyle.value = buildPreviewStyle(index)
   }
-
-  emitDropPosition(getInsertIndex(event, index))
-}
-
-const onDragEnter = (node, index, event) => {
-  onNodeDragFeedback(node, index, event)
-}
-
-const onDragOverNode = (node, index, event) => {
-  onNodeDragFeedback(node, index, event)
-}
-
-const getGroupInsertIndex = (event) => {
-  const container = event.currentTarget
-  const cards = Array.from(container.querySelectorAll(':scope > li > .bookmark-row > .bookmark-content'))
-
-  if (!cards.length) {
-    return 0
-  }
-
-  for (let index = 0; index < cards.length; index += 1) {
-    const rect = cards[index].getBoundingClientRect()
-    if (event.clientY < rect.top) {
-      return index
-    }
-    if (event.clientY <= rect.bottom) {
-      return event.clientX < rect.left + rect.width / 2 ? index : index + 1
-    }
-  }
-
-  return cards.length
-}
-
-const onGroupDragOver = (event) => {
-  const sourceId = getSourceId(event)
-  if (!sourceId) {
-    return
-  }
-  emitDropPosition(getGroupInsertIndex(event))
-}
-
-const onGroupDrop = (event) => {
-  const sourceId = getSourceId(event)
-  if (!sourceId) {
-    return
-  }
-  emit('drop-at-position', sourceId, parentId.value, getGroupInsertIndex(event))
-}
-
-const onDrop = (node, index, event) => {
-  event.preventDefault()
-
-  const sourceId = getSourceId(event)
-  if (!sourceId || String(sourceId) === String(node.id)) {
-    return
-  }
-
-  if (isFolderCenterDrop(node, event)) {
-    emit('drop-node', sourceId, node.id)
-    return
-  }
-
-  emit('drop-at-position', sourceId, parentId.value, getInsertIndex(event, index))
-}
+)
 
 const onContextMenu = (node, event) => {
   event.preventDefault()
   event.stopPropagation()
   emit('open-context-menu', node, { x: event.clientX, y: event.clientY })
 }
-
-const forwardDragStart = (id) => emit('drag-start', id)
-const forwardDragEnd = () => emit('drag-end')
-const forwardDropNode = (sourceId, targetId) => emit('drop-node', sourceId, targetId)
-const forwardDropAtPosition = (sourceId, targetParentId, targetIndex) =>
-  emit('drop-at-position', sourceId, targetParentId, targetIndex)
-const forwardMarkDropTarget = (id) => emit('mark-drop-target', id)
-const forwardMarkDropPosition = (targetParentId, targetIndex) =>
-  emit('mark-drop-position', targetParentId, targetIndex)
 const forwardOpenContextMenu = (node, point) => emit('open-context-menu', node, point)
 </script>
 
 <template>
-  <ul class="bookmark-group" :style="{ marginLeft: indent }" @dragover.stop.prevent="onGroupDragOver" @drop.stop.prevent="onGroupDrop">
+  <ul
+    ref="groupRef"
+    class="bookmark-group"
+    :class="{ 'drag-active': hasActiveDrag }"
+    :style="{ marginLeft: indent }"
+    :data-group-parent-id="parentId ?? ''"
+  >
+    <li
+      v-if="hasDropPreview && previewStyle"
+      class="bookmark-drop-preview"
+      :style="previewStyle"
+      aria-hidden="true"
+    />
     <template v-for="(node, index) in nodes" :key="node.id">
-      <li
-        v-if="hasDropPreview && previewIndex === index"
-        class="bookmark-drop-spacer"
-        aria-hidden="true"
-      />
       <li>
-        <motion.div
+        <div
           class="bookmark-row"
-          :layout="true"
           :class="{
             folder: hasChildren(node),
             dragging: isDragging(node.id),
             'drop-target': isDropTarget(node.id)
           }"
-          :animate="rowAnimation(node.id)"
-          :transition="rowTransition"
-          :while-hover="rowHover(node.id)"
         >
           <div
             class="bookmark-content"
-            draggable="true"
-            @dragstart="onDragStart(node, $event)"
-            @dragend="onDragEnd"
-            @dragenter.prevent.stop="onDragEnter(node, index, $event)"
-            @dragover.prevent.stop="onDragOverNode(node, index, $event)"
-            @drop.stop="onDrop(node, index, $event)"
+            :data-drag-id="String(node.id)"
+            :data-drop-node-id="String(node.id)"
+            :data-parent-id="parentId ?? ''"
+            :data-index="String(index)"
+            :data-has-children="hasChildren(node) ? 'true' : 'false'"
             @contextmenu="onContextMenu(node, $event)"
           >
             <a
@@ -335,6 +215,7 @@ const forwardOpenContextMenu = (node, point) => emit('open-context-menu', node, 
               :href="node.url"
               target="_blank"
               rel="noreferrer"
+              draggable="false"
               :style="{ '--thumb-bg': `url('${thumbMap[node.id]}')` }"
               @click.stop
             >
@@ -342,6 +223,7 @@ const forwardOpenContextMenu = (node, point) => emit('open-context-menu', node, 
                 class="bookmark-thumb"
                 :src="thumbMap[node.id]"
                 :alt="node.title || '缩略图'"
+                draggable="false"
                 loading="lazy"
                 decoding="async"
               />
@@ -352,6 +234,7 @@ const forwardOpenContextMenu = (node, point) => emit('open-context-menu', node, 
               :href="node.url"
               target="_blank"
               rel="noreferrer"
+              draggable="false"
               @click.stop
             >
               ...
@@ -359,13 +242,13 @@ const forwardOpenContextMenu = (node, point) => emit('open-context-menu', node, 
             <div v-else class="bookmark-thumb folder-thumb">DIR</div>
 
             <div class="bookmark-text">
-              <a v-if="node.url" :href="node.url" target="_blank" rel="noreferrer" @click.stop>
+              <a v-if="node.url" :href="node.url" target="_blank" rel="noreferrer" draggable="false" @click.stop>
                 {{ node.title || '未命名书签' }}
               </a>
               <span v-else>{{ node.title || '未命名目录' }}</span>
             </div>
           </div>
-        </motion.div>
+        </div>
         <BookmarkGroup
           v-if="hasChildren(node)"
           :nodes="node.children"
@@ -374,17 +257,10 @@ const forwardOpenContextMenu = (node, point) => emit('open-context-menu', node, 
           :dragging-id="draggingId"
           :drop-position="dropPosition"
           :drop-target-id="dropTargetId"
-          @drag-start="forwardDragStart"
-          @drag-end="forwardDragEnd"
-          @drop-node="forwardDropNode"
-          @drop-at-position="forwardDropAtPosition"
-          @mark-drop-target="forwardMarkDropTarget"
-          @mark-drop-position="forwardMarkDropPosition"
           @open-context-menu="forwardOpenContextMenu"
         />
       </li>
     </template>
-    <li v-if="hasDropPreview && previewIndex === nodes.length" class="bookmark-drop-spacer" aria-hidden="true" />
   </ul>
 </template>
 
@@ -394,6 +270,7 @@ const forwardOpenContextMenu = (node, point) => emit('open-context-menu', node, 
   list-style: none;
   margin: 0;
   padding: 0;
+  position: relative;
   display: flex;
   flex-wrap: wrap;
   align-items: flex-start;
@@ -413,6 +290,20 @@ const forwardOpenContextMenu = (node, point) => emit('open-context-menu', node, 
 
 .bookmark-row {
   position: relative;
+  z-index: 1;
+  transform: scale(1);
+  transition:
+    transform 0.16s ease,
+    opacity 0.16s ease;
+}
+
+.bookmark-row.dragging {
+  transform: scale(0.93);
+  z-index: 4;
+}
+
+.bookmark-row.drop-target {
+  z-index: 3;
 }
 
 .bookmark-content {
@@ -431,12 +322,15 @@ const forwardOpenContextMenu = (node, point) => emit('open-context-menu', node, 
   transition:
     border-color 0.16s ease,
     box-shadow 0.16s ease,
-    outline-color 0.16s ease;
+    outline-color 0.16s ease,
+    transform 0.12s ease;
   cursor: grab;
+  touch-action: none;
 }
 
 .bookmark-row.dragging .bookmark-content {
-  opacity: 0.32;
+  opacity: 0.24;
+  transform: none;
 }
 
 .bookmark-row.drop-target .bookmark-content {
@@ -447,6 +341,13 @@ const forwardOpenContextMenu = (node, point) => emit('open-context-menu', node, 
 .bookmark-content:hover {
   border-color: var(--bookmark-hover-border);
   box-shadow: var(--bookmark-hover-shadow);
+  transform: translateY(-2px);
+}
+
+.bookmark-group.drag-active .bookmark-content:hover {
+  border-color: var(--bookmark-card-border);
+  box-shadow: var(--bookmark-card-shadow);
+  transform: none;
 }
 
 .bookmark-row.folder .bookmark-content {
@@ -487,6 +388,7 @@ const forwardOpenContextMenu = (node, point) => emit('open-context-menu', node, 
   position: relative;
   overflow: hidden;
   background: var(--thumb-surface);
+  contain: paint;
 }
 
 .bookmark-thumb-wrap::before {
@@ -569,19 +471,28 @@ const forwardOpenContextMenu = (node, point) => emit('open-context-menu', node, 
   color: var(--folder-title-text);
 }
 
-.bookmark-drop-spacer {
-  width: 124px;
-  height: 124px;
+.bookmark-drop-preview {
+  position: absolute;
+  z-index: 5;
+  pointer-events: none;
+  list-style: none;
   border-radius: 3px;
-  border: 1px dashed rgba(37, 99, 235, 0.32);
-  background: rgba(37, 99, 235, 0.06);
-  box-shadow: inset 0 0 0 1px rgba(37, 99, 235, 0.06);
-  opacity: 0.85;
-  transform: scale(0.98);
-  transition:
-    transform 0.16s ease,
-    opacity 0.16s ease,
-    background-color 0.16s ease;
+  border: 1px dashed rgba(37, 99, 235, 0.36);
+  background:
+    linear-gradient(180deg, rgba(37, 99, 235, 0.1) 0%, rgba(37, 99, 235, 0.04) 100%);
+  box-shadow:
+    inset 0 0 0 1px rgba(37, 99, 235, 0.08),
+    0 8px 18px rgba(37, 99, 235, 0.08);
+  backdrop-filter: blur(4px);
+}
+
+.bookmark-group.drag-active .bookmark-thumb-wrap {
+  box-shadow: 0 1px 2px rgba(15, 23, 42, 0.06);
+}
+
+.bookmark-group.drag-active .bookmark-thumb-wrap::before,
+.bookmark-group.drag-active .bookmark-thumb-wrap::after {
+  display: none;
 }
 
 @media (max-width: 768px) {

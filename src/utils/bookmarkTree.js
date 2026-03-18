@@ -74,6 +74,19 @@ const findNodeLocation = (nodes = [], targetId, parentId = null) => {
   return null
 }
 
+const getSiblingList = (nodes = [], parentId = null) => {
+  if (parentId === null || parentId === undefined) {
+    return nodes
+  }
+
+  const parentNode = findNodeById(nodes, parentId)
+  if (!parentNode || !Array.isArray(parentNode.children)) {
+    return null
+  }
+
+  return parentNode.children
+}
+
 const removeNodeRecursive = (nodes = [], targetId) => {
   let removedNode = null
   const nextNodes = []
@@ -233,6 +246,52 @@ export const moveNodeInTree = (nodes = [], sourceId, targetFolderId) => {
   }
 
   return insertNodeIntoFolder(removal.nodes, targetFolderId, removal.removedNode)
+}
+
+export const getNodeLocation = (nodes = [], targetId) => findNodeLocation(nodes, targetId)
+
+export const canSwapNodes = (nodes = [], sourceId, targetId) => {
+  if (String(sourceId) === String(targetId)) {
+    return false
+  }
+
+  const sourceLocation = findNodeLocation(nodes, sourceId)
+  const targetLocation = findNodeLocation(nodes, targetId)
+  if (!sourceLocation || !targetLocation) {
+    return false
+  }
+
+  if (containsId(sourceLocation.node, targetId) || containsId(targetLocation.node, sourceId)) {
+    return false
+  }
+
+  return true
+}
+
+export const swapNodesInTree = (nodes = [], sourceId, targetId) => {
+  if (!canSwapNodes(nodes, sourceId, targetId)) {
+    return nodes
+  }
+
+  const nextNodes = cloneNodes(nodes)
+  const sourceLocation = findNodeLocation(nextNodes, sourceId)
+  const targetLocation = findNodeLocation(nextNodes, targetId)
+  if (!sourceLocation || !targetLocation) {
+    return nodes
+  }
+
+  const sourceList = getSiblingList(nextNodes, sourceLocation.parentId)
+  const targetList = getSiblingList(nextNodes, targetLocation.parentId)
+  if (!sourceList || !targetList) {
+    return nodes
+  }
+
+  const sourceNode = sourceList[sourceLocation.index]
+  const targetNode = targetList[targetLocation.index]
+  sourceList[sourceLocation.index] = targetNode
+  targetList[targetLocation.index] = sourceNode
+
+  return nextNodes
 }
 
 export const getMoveToIndexPosition = (nodes = [], sourceId, targetParentId, targetIndex) => {

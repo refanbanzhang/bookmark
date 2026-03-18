@@ -2,14 +2,16 @@
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import BookmarkGroup from './components/BookmarkGroup.vue'
 import {
+  canSwapNodes,
   findNodeById,
-  getMoveToIndexPosition,
+  getNodeLocation,
   hasChildren,
-  moveNodeToIndexInTree,
   moveNodeInTree,
   pruneNodesByIds,
-  renameNodeInTree
+  renameNodeInTree,
+  swapNodesInTree
 } from './utils/bookmarkTree'
+import { isFolderCenterDrop as checkFolderCenterDrop } from './utils/folderDropZone'
 
 const fallbackTree = [
   {
@@ -59,14 +61,18 @@ const loading = ref(true)
 const status = ref('正在加载书签……')
 const warning = ref('')
 const theme = ref('light')
+const contentRef = ref(null)
 const draggingId = ref('')
 const dropTargetId = ref('')
+const dragPreview = ref(null)
 const dropPosition = ref(null)
+const dropTargetKind = ref('')
 const chromeRootFolderId = ref('1')
 const editingNode = ref(null)
 const editingTitle = ref('')
 const editError = ref('')
 const editInput = ref(null)
+const deletingNode = ref(null)
 const contextMenu = ref({
   visible: false,
   x: 0,
@@ -78,12 +84,33 @@ const editingKind = computed(() => {
   if (!editingNode.value) return ''
   return hasChildren(editingNode.value) ? '文件夹' : '书签'
 })
+const deletingKind = computed(() => {
+  if (!deletingNode.value) return ''
+  return hasChildren(deletingNode.value) ? '文件夹' : '书签'
+})
 const contextNode = computed(() => contextMenu.value.node)
 const contextKind = computed(() => (contextNode.value ? (hasChildren(contextNode.value) ? '文件夹' : '书签') : ''))
 const contextMenuStyle = computed(() => ({
   left: `${contextMenu.value.x}px`,
   top: `${contextMenu.value.y}px`
 }))
+const dragPreviewStyle = computed(() => {
+  if (!dragPreview.value) {
+    return null
+  }
+
+  return {
+    width: `${dragPreview.value.width}px`,
+    height: `${dragPreview.value.height}px`,
+    transform: `translate3d(${dragPreview.value.left}px, ${dragPreview.value.top}px, 0)`
+  }
+})
+
+let dragGesture = null
+let activePointerId = null
+let pointerFrameId = 0
+let latestPointerPoint = null
+let suppressClickUntil = 0
 
 const groupedModules = computed(() => {
   const modules = []
@@ -235,7 +262,7 @@ const getChromeNodeOps = () => {
 
 const deleteNode = async (node) => {
   if (!node?.id) {
-    return
+    return false
   }
 
   const targetId = String(node.id)
@@ -257,10 +284,32 @@ const deleteNode = async (node) => {
       closeEdit()
     }
     closeContextMenu()
+    return true
   } catch (error) {
     console.error('delete failed', error)
     status.value = '删除失败。'
     warning.value = error instanceof Error ? error.message : '请检查 Chrome 书签权限。'
+    return false
+  }
+}
+
+const openDeleteConfirm = (node) => {
+  if (!node) return
+  closeContextMenu()
+  deletingNode.value = node
+}
+
+const closeDeleteConfirm = () => {
+  deletingNode.value = null
+}
+
+const confirmDelete = async () => {
+  if (!deletingNode.value) {
+    return
+  }
+  const success = await deleteNode(deletingNode.value)
+  if (success) {
+    closeDeleteConfirm()
   }
 }
 
@@ -332,9 +381,7 @@ const moveNodeToFolder = async (sourceId, targetFolderId) => {
     status.value = '移动失败。'
     warning.value = error instanceof Error ? error.message : '请检查 Chrome 书签权限。'
   } finally {
-    draggingId.value = ''
-    dropTargetId.value = ''
-    dropPosition.value = null
+    onDragEnd()
   }
 }
 
@@ -345,16 +392,324 @@ const normalizeParentId = (value) => {
   return String(value)
 }
 
-const moveNodeToPosition = async (sourceId, targetParentId, targetIndex) => {
+const onDragStart = (id) => {
+  closeContextMenu()
+  draggingId.value = String(id)
+  dropTargetId.value = ''
+  dropPosition.value = null
+  dropTargetKind.value = ''
+}
+
+const onDragEnd = () => {
+  draggingId.value = ''
+  dropTargetId.value = ''
+  dropPosition.value = null
+  dropTargetKind.value = ''
+  dragPreview.value = null
+}
+
+const onDropTarget = (id, kind = 'swap') => {
+  const nextId = String(id)
+  if (dropTargetId.value === nextId && dropTargetKind.value === kind && dropPosition.value === null) {
+    return
+  }
+  dropTargetId.value = nextId
+  dropTargetKind.value = kind
+  dropPosition.value = null
+}
+
+const clamp = (value, min, max) => Math.min(max, Math.max(min, value))
+
+const nodeContainsId = (node, targetId) => {
+  if (!node) {
+    return false
+  }
+  if (String(node.id) === String(targetId)) {
+    return true
+  }
+  if (!hasChildren(node)) {
+    return false
+  }
+  return node.children.some((child) => nodeContainsId(child, targetId))
+}
+
+const clearDropState = () => {
+  if (!dropTargetId.value && !dropPosition.value && !dropTargetKind.value) {
+    return
+  }
+  dropTargetId.value = ''
+  dropTargetKind.value = ''
+  dropPosition.value = null
+}
+
+const resetPointerDragState = () => {
+  if (dragGesture?.captureTarget?.releasePointerCapture && activePointerId !== null) {
+    try {
+      dragGesture.captureTarget.releasePointerCapture(activePointerId)
+    } catch {}
+  }
+  dragGesture = null
+  activePointerId = null
+  latestPointerPoint = null
+  if (pointerFrameId) {
+    window.cancelAnimationFrame(pointerFrameId)
+    pointerFrameId = 0
+  }
+  document.body.style.userSelect = ''
+  document.body.style.cursor = ''
+}
+
+const activatePointerDrag = (point) => {
+  if (!dragGesture) {
+    return
+  }
+  dragGesture.activated = true
+  onDragStart(dragGesture.id)
+  dragPreview.value = {
+    label: dragGesture.label,
+    kind: dragGesture.kind,
+    width: dragGesture.width,
+    height: dragGesture.height,
+    left: point.x - dragGesture.offsetX,
+    top: point.y - dragGesture.offsetY
+  }
+  document.body.style.userSelect = 'none'
+  document.body.style.cursor = 'grabbing'
+}
+
+const updateDragPreviewPosition = (point) => {
+  if (!dragPreview.value || !dragGesture) {
+    return
+  }
+  dragPreview.value = {
+    ...dragPreview.value,
+    left: point.x - dragGesture.offsetX,
+    top: point.y - dragGesture.offsetY
+  }
+}
+
+const updateDropStateFromPoint = (point) => {
+  if (!draggingId.value) {
+    return
+  }
+
+  const pointTarget = document.elementFromPoint(point.x, point.y)
+  if (!pointTarget || !contentRef.value?.contains(pointTarget)) {
+    clearDropState()
+    return
+  }
+
+  const sourceId = String(draggingId.value)
+  const sourceNode = findNodeById(bookmarkTree.value, sourceId)
+  const card = pointTarget.closest('[data-drop-node-id]')
+  if (card && contentRef.value.contains(card)) {
+    const targetId = String(card.dataset.dropNodeId || '')
+    if (targetId && targetId !== sourceId) {
+      const targetNode = findNodeById(bookmarkTree.value, targetId)
+      const rect = card.getBoundingClientRect()
+
+      if (
+        targetNode &&
+        hasChildren(targetNode) &&
+        !nodeContainsId(sourceNode, targetId) &&
+        checkFolderCenterDrop({
+          clientX: point.x,
+          clientY: point.y,
+          rectLeft: rect.left,
+          rectTop: rect.top,
+          rectWidth: rect.width,
+          rectHeight: rect.height,
+          isCurrentTarget: dropTargetId.value === targetId
+        })
+      ) {
+        onDropTarget(targetId, 'folder')
+        return
+      }
+
+      if (canSwapNodes(bookmarkTree.value, sourceId, targetId)) {
+        onDropTarget(targetId, 'swap')
+        return
+      }
+    }
+  }
+
+  const moduleFolder = pointTarget.closest('[data-module-folder-id]')
+  if (moduleFolder && contentRef.value.contains(moduleFolder)) {
+    const folderId = String(moduleFolder.dataset.moduleFolderId || '')
+    if (folderId && folderId !== sourceId && !nodeContainsId(sourceNode, folderId)) {
+      onDropTarget(folderId, 'folder')
+      return
+    }
+  }
+
+  clearDropState()
+}
+
+const processPointerMove = () => {
+  pointerFrameId = 0
+  if (!dragGesture || !latestPointerPoint) {
+    return
+  }
+
+  const point = latestPointerPoint
+  if (!dragGesture.activated) {
+    const distance = Math.hypot(point.x - dragGesture.startX, point.y - dragGesture.startY)
+    if (distance < 6) {
+      return
+    }
+    activatePointerDrag(point)
+  }
+
+  updateDragPreviewPosition(point)
+  updateDropStateFromPoint(point)
+}
+
+const queuePointerMove = (event) => {
+  if (!dragGesture || event.pointerId !== activePointerId) {
+    return
+  }
+  latestPointerPoint = { x: event.clientX, y: event.clientY }
+  if (pointerFrameId) {
+    return
+  }
+  pointerFrameId = window.requestAnimationFrame(processPointerMove)
+}
+
+const onPointerDown = (event) => {
+  if (event.button !== 0) {
+    return
+  }
+  if (event.target.closest('.context-menu, .modal-card')) {
+    return
+  }
+  if (event.target.closest('button, input, textarea, select')) {
+    return
+  }
+
+  const dragHandle = event.target.closest('[data-drag-id]')
+  if (!dragHandle || !contentRef.value?.contains(dragHandle)) {
+    return
+  }
+
+  event.preventDefault()
+  const rect = dragHandle.getBoundingClientRect()
+  const dragIdValue = String(dragHandle.dataset.dragId || '')
+  const node = findNodeById(bookmarkTree.value, dragIdValue)
+  dragGesture = {
+    id: dragIdValue,
+    pointerId: event.pointerId,
+    startX: event.clientX,
+    startY: event.clientY,
+    offsetX: event.clientX - rect.left,
+    offsetY: event.clientY - rect.top,
+    width: rect.width,
+    height: rect.height,
+    label: node?.title || dragHandle.textContent?.trim() || '未命名',
+    kind: node && hasChildren(node) ? 'folder' : 'bookmark',
+    activated: false,
+    captureTarget: dragHandle
+  }
+  activePointerId = event.pointerId
+  latestPointerPoint = { x: event.clientX, y: event.clientY }
+  if (dragHandle.setPointerCapture) {
+    try {
+      dragHandle.setPointerCapture(event.pointerId)
+    } catch {}
+  }
+}
+
+const onWindowPointerMove = (event) => {
+  queuePointerMove(event)
+}
+
+const onWindowPointerUp = (event) => {
+  if (!dragGesture || event.pointerId !== activePointerId) {
+    return
+  }
+
+  const point = { x: event.clientX, y: event.clientY }
+  const distance = Math.hypot(point.x - dragGesture.startX, point.y - dragGesture.startY)
+  if (!dragGesture.activated && distance >= 6) {
+    activatePointerDrag(point)
+  }
+  if (dragGesture.activated) {
+    updateDragPreviewPosition(point)
+    updateDropStateFromPoint(point)
+  }
+
+  const didDrag = dragGesture.activated
+  const sourceId = draggingId.value || dragGesture.id
+  const targetId = dropTargetId.value
+  const targetKind = dropTargetKind.value
+
+  resetPointerDragState()
+
+  if (!didDrag) {
+    return
+  }
+
+  suppressClickUntil = Date.now() + 250
+  onDragEnd()
+
+  if (targetKind === 'folder' && targetId) {
+    void moveNodeToFolder(sourceId, targetId)
+    return
+  }
+
+  if (targetKind === 'swap' && targetId) {
+    void swapNodes(sourceId, targetId)
+  }
+}
+
+const onWindowPointerCancel = (event) => {
+  if (!dragGesture || event.pointerId !== activePointerId) {
+    return
+  }
+  resetPointerDragState()
+  onDragEnd()
+}
+
+const onWindowClickCapture = (event) => {
+  if (Date.now() >= suppressClickUntil) {
+    return
+  }
+  suppressClickUntil = 0
+  event.preventDefault()
+  event.stopPropagation()
+}
+
+const onNativeDragStart = (event) => {
+  if (!contentRef.value?.contains(event.target)) {
+    return
+  }
+  if (event.target.closest('[data-drag-id]')) {
+    event.preventDefault()
+  }
+}
+
+const getChromeMoveParentId = (parentId, fallbackRootId = '') => {
+  if (parentId !== null && parentId !== undefined && parentId !== '') {
+    return String(parentId)
+  }
+  return fallbackRootId || undefined
+}
+
+const swapNodes = async (sourceId, targetId) => {
   const source = String(sourceId || '')
-  const parentId = normalizeParentId(targetParentId)
-  if (!source) {
+  const target = String(targetId || '')
+  if (!source || !target || source === target) {
     onDragEnd()
     return
   }
 
-  const position = getMoveToIndexPosition(bookmarkTree.value, source, parentId, Number(targetIndex))
-  if (!position) {
+  if (!canSwapNodes(bookmarkTree.value, source, target)) {
+    onDragEnd()
+    return
+  }
+
+  const sourceLocation = getNodeLocation(bookmarkTree.value, source)
+  const targetLocation = getNodeLocation(bookmarkTree.value, target)
+  if (!sourceLocation || !targetLocation) {
     onDragEnd()
     return
   }
@@ -362,72 +717,34 @@ const moveNodeToPosition = async (sourceId, targetParentId, targetIndex) => {
   try {
     if (hasChromeBookmarks()) {
       const ops = getChromeNodeOps()
-      const destination = { index: position.index }
-      const isCrossParent = String(position.sourceParentId) !== String(position.targetParentId)
+      const sourceParentId = normalizeParentId(sourceLocation.parentId)
+      const targetParentId = normalizeParentId(targetLocation.parentId)
 
-      if (position.parentId !== null) {
-        destination.parentId = String(position.parentId)
-      } else if (isCrossParent && chromeRootFolderId.value) {
-        destination.parentId = chromeRootFolderId.value
+      if (sourceParentId === targetParentId) {
+        if (sourceLocation.index < targetLocation.index) {
+          await ops.move(target, { parentId: getChromeMoveParentId(targetParentId, chromeRootFolderId.value), index: sourceLocation.index })
+          await ops.move(source, { parentId: getChromeMoveParentId(sourceParentId, chromeRootFolderId.value), index: targetLocation.index })
+        } else {
+          await ops.move(source, { parentId: getChromeMoveParentId(sourceParentId, chromeRootFolderId.value), index: targetLocation.index })
+          await ops.move(target, { parentId: getChromeMoveParentId(targetParentId, chromeRootFolderId.value), index: sourceLocation.index })
+        }
+      } else {
+        await ops.move(source, { parentId: getChromeMoveParentId(targetParentId, chromeRootFolderId.value), index: targetLocation.index })
+        await ops.move(target, { parentId: getChromeMoveParentId(sourceParentId, chromeRootFolderId.value), index: sourceLocation.index })
       }
-
-      await ops.move(source, destination)
     }
 
-    bookmarkTree.value = moveNodeToIndexInTree(bookmarkTree.value, source, position.parentId, position.index)
-    status.value = '已更新排序。'
-    warning.value = hasChromeBookmarks() ? '' : '当前为演示数据，排序仅在页面内生效。'
+    bookmarkTree.value = swapNodesInTree(bookmarkTree.value, source, target)
+    status.value = '已交换两个书签位置。'
+    warning.value = hasChromeBookmarks() ? '' : '当前为演示数据，交换仅在页面内生效。'
   } catch (error) {
-    console.error('reorder failed', error)
-    status.value = '排序失败。'
+    console.error('swap failed', error)
+    status.value = '交换失败。'
     warning.value = error instanceof Error ? error.message : '请检查 Chrome 书签权限。'
   } finally {
     onDragEnd()
   }
 }
-
-const onDragStart = (id) => {
-  closeContextMenu()
-  draggingId.value = String(id)
-  dropTargetId.value = ''
-  dropPosition.value = null
-}
-
-const onDragEnd = () => {
-  draggingId.value = ''
-  dropTargetId.value = ''
-  dropPosition.value = null
-}
-
-const onDropTarget = (id) => {
-  const nextId = String(id)
-  if (dropTargetId.value === nextId && dropPosition.value === null) {
-    return
-  }
-  dropTargetId.value = nextId
-  dropPosition.value = null
-}
-
-const onDropPosition = (targetParentId, targetIndex) => {
-  const nextPosition = {
-    parentId: normalizeParentId(targetParentId),
-    index: Number.isFinite(Number(targetIndex)) ? Number(targetIndex) : 0
-  }
-
-  const current = dropPosition.value
-  const isSamePosition =
-    current &&
-    current.parentId === nextPosition.parentId &&
-    current.index === nextPosition.index
-  if (dropTargetId.value === '' && isSamePosition) {
-    return
-  }
-
-  dropTargetId.value = ''
-  dropPosition.value = nextPosition
-}
-
-const clamp = (value, min, max) => Math.min(max, Math.max(min, value))
 
 const openContextMenu = (node, point) => {
   if (!node || !point) {
@@ -455,7 +772,7 @@ const handleContextRename = () => {
 
 const handleContextDelete = () => {
   if (!contextNode.value) return
-  void deleteNode(contextNode.value)
+  openDeleteConfirm(contextNode.value)
 }
 
 watch(editingNode, async (node) => {
@@ -473,16 +790,27 @@ onMounted(() => {
   void loadBookmarks()
   window.addEventListener('resize', closeContextMenu)
   window.addEventListener('scroll', closeContextMenu, true)
+  window.addEventListener('pointermove', onWindowPointerMove)
+  window.addEventListener('pointerup', onWindowPointerUp)
+  window.addEventListener('pointercancel', onWindowPointerCancel)
+  window.addEventListener('click', onWindowClickCapture, true)
+  window.addEventListener('dragstart', onNativeDragStart)
 })
 
 onBeforeUnmount(() => {
+  resetPointerDragState()
   window.removeEventListener('resize', closeContextMenu)
   window.removeEventListener('scroll', closeContextMenu, true)
+  window.removeEventListener('pointermove', onWindowPointerMove)
+  window.removeEventListener('pointerup', onWindowPointerUp)
+  window.removeEventListener('pointercancel', onWindowPointerCancel)
+  window.removeEventListener('click', onWindowClickCapture, true)
+  window.removeEventListener('dragstart', onNativeDragStart)
 })
 </script>
 
 <template>
-  <main class="content" @click="closeContextMenu">
+  <main ref="contentRef" class="content" @click="closeContextMenu" @pointerdown="onPointerDown">
     <header class="topbar">
       <div class="topbar-brand">
         <h1 class="title">书签主页</h1>
@@ -512,17 +840,13 @@ onBeforeUnmount(() => {
           dragging: module.node && draggingId === String(module.node.id),
           'drop-target': module.node && dropTargetId === String(module.node.id)
         }"
-        @dragenter.prevent="module.node && onDropTarget(module.node.id)"
-        @dragover.prevent="module.node && onDropTarget(module.node.id)"
-        @drop.prevent="module.node && moveNodeToFolder(draggingId, module.node.id)"
+        :data-module-folder-id="module.node ? String(module.node.id) : null"
       >
         <div class="module-header">
           <div
             v-if="module.node"
             class="module-header-title"
-            draggable="true"
-            @dragstart="onDragStart(module.node.id)"
-            @dragend="onDragEnd"
+            :data-drag-id="String(module.node.id)"
             @contextmenu.prevent.stop="openContextMenu(module.node, { x: $event.clientX, y: $event.clientY })"
           >
             <span>{{ module.title }}</span>
@@ -539,12 +863,6 @@ onBeforeUnmount(() => {
             :dragging-id="draggingId"
             :drop-position="dropPosition"
             :drop-target-id="dropTargetId"
-            @drag-start="onDragStart"
-            @drag-end="onDragEnd"
-            @drop-node="moveNodeToFolder"
-            @drop-at-position="moveNodeToPosition"
-            @mark-drop-target="onDropTarget"
-            @mark-drop-position="onDropPosition"
             @open-context-menu="openContextMenu"
           />
         </div>
@@ -584,6 +902,27 @@ onBeforeUnmount(() => {
       </div>
     </div>
 
+    <div v-if="deletingNode" class="modal-overlay" @click.self="closeDeleteConfirm">
+      <div class="modal-card" role="dialog" aria-modal="true" :aria-label="`删除${deletingKind}`">
+        <div class="modal-header">
+          <h3 class="modal-title">确认删除{{ deletingKind }}</h3>
+          <button class="modal-close" type="button" @click="closeDeleteConfirm">×</button>
+        </div>
+
+        <p class="modal-meta">
+          将删除{{ deletingKind }}「{{ deletingNode.title || `未命名${deletingKind}` }}」。
+          {{ hasChildren(deletingNode) ? '此操作会同时删除其下全部内容。' : '此操作不可撤销。' }}
+        </p>
+
+        <div class="modal-actions">
+          <button class="action-button" type="button" @click="closeDeleteConfirm">取消</button>
+          <button class="action-button action-button-danger" type="button" @click="confirmDelete">
+            确认删除
+          </button>
+        </div>
+      </div>
+    </div>
+
     <div
       v-if="contextMenu.visible && contextNode"
       class="context-menu"
@@ -596,6 +935,11 @@ onBeforeUnmount(() => {
       <button class="context-menu-item context-menu-item-danger" type="button" @click="handleContextDelete">
         删除{{ contextKind }}
       </button>
+    </div>
+
+    <div v-if="dragPreview && dragPreviewStyle" class="drag-preview" :style="dragPreviewStyle" aria-hidden="true">
+      <div class="drag-preview-badge">{{ dragPreview.kind === 'folder' ? '目录' : '书签' }}</div>
+      <div class="drag-preview-label">{{ dragPreview.label }}</div>
     </div>
   </main>
 </template>
