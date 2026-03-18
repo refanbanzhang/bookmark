@@ -1,0 +1,52 @@
+import test from 'node:test'
+import assert from 'node:assert/strict'
+import { getMoveToIndexPosition, moveNodeToIndexInTree } from '../src/utils/bookmarkTree.js'
+
+const makeTree = () => [
+  {
+    id: 'bar',
+    title: '书签栏',
+    children: [
+      { id: 'b1', title: 'Vue' },
+      { id: 'b2', title: 'Vite' },
+      {
+        id: 'b3',
+        title: '设计灵感',
+        children: [
+          { id: 'b3-1', title: 'Dribbble' },
+          { id: 'b3-2', title: 'Behance' }
+        ]
+      }
+    ]
+  }
+]
+
+test('getMoveToIndexPosition adjusts index when moving forward in same parent', () => {
+  const position = getMoveToIndexPosition(makeTree(), 'b1', 'bar', 2)
+  assert.deepEqual(position, {
+    parentId: 'bar',
+    index: 1,
+    sourceParentId: 'bar',
+    targetParentId: 'bar'
+  })
+})
+
+test('moveNodeToIndexInTree inserts at exact preview slot', () => {
+  const moved = moveNodeToIndexInTree(makeTree(), 'b2', 'bar', 0)
+  assert.deepEqual(
+    moved[0].children.map((node) => node.id),
+    ['b2', 'b1', 'b3']
+  )
+})
+
+test('moveNodeToIndexInTree supports moving child to parent sibling list', () => {
+  const moved = moveNodeToIndexInTree(makeTree(), 'b3-2', 'bar', 1)
+  assert.deepEqual(
+    moved[0].children.map((node) => node.id),
+    ['b1', 'b3-2', 'b2', 'b3']
+  )
+  assert.deepEqual(
+    moved[0].children.find((node) => node.id === 'b3').children.map((node) => node.id),
+    ['b3-1']
+  )
+})

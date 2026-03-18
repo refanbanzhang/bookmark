@@ -3,7 +3,9 @@ import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import BookmarkGroup from './components/BookmarkGroup.vue'
 import {
   findNodeById,
+  getMoveToIndexPosition,
   hasChildren,
+  moveNodeToIndexInTree,
   moveNodeInTree,
   pruneNodesByIds,
   renameNodeInTree
@@ -59,6 +61,8 @@ const warning = ref('')
 const theme = ref('light')
 const draggingId = ref('')
 const dropTargetId = ref('')
+const dropPosition = ref(null)
+const chromeRootFolderId = ref('1')
 const editingNode = ref(null)
 const editingTitle = ref('')
 const editError = ref('')
@@ -137,15 +141,24 @@ const loadBookmarksFromChrome = async () => {
       const title = (node.title || '').toLowerCase()
       return ['书签栏', 'bookmarks bar', 'bookmark bar'].includes(title)
     })
-    return barNode?.children || []
+    return {
+      rootFolderId: String(barNode?.id || '1'),
+      nodes: barNode?.children || []
+    }
   }
 
   if (Array.isArray(tree)) {
     const barNode = tree.find((node) => String(node.id) === '1')
-    return barNode?.children || []
+    return {
+      rootFolderId: String(barNode?.id || '1'),
+      nodes: barNode?.children || []
+    }
   }
 
-  return []
+  return {
+    rootFolderId: '1',
+    nodes: []
+  }
 }
 
 const applyTheme = (value) => {
@@ -186,20 +199,23 @@ const loadBookmarks = async () => {
 
   if (!hasChromeBookmarks()) {
     bookmarkTree.value = JSON.parse(JSON.stringify(fallbackTree))
+    chromeRootFolderId.value = ''
     syncStatusForMode()
     loading.value = false
     return
   }
 
   try {
-    const tree = await loadBookmarksFromChrome()
-    bookmarkTree.value = tree
+    const { nodes, rootFolderId } = await loadBookmarksFromChrome()
+    bookmarkTree.value = nodes
+    chromeRootFolderId.value = rootFolderId
     syncStatusForMode()
   } catch (error) {
     console.error('bookmark fetch failed', error)
     status.value = '读取书签失败，显示演示内容。'
     warning.value = '检查 Chrome 权限后重新打开新标签页即可。'
     bookmarkTree.value = JSON.parse(JSON.stringify(fallbackTree))
+    chromeRootFolderId.value = ''
   } finally {
     loading.value = false
   }
@@ -212,8 +228,8 @@ const getChromeNodeOps = () => {
       wrapChromeCallback((resolve) => api.update(id, { title }, resolve)),
     remove: (id) => wrapChromeCallback((resolve) => api.remove(id, resolve)),
     removeTree: (id) => wrapChromeCallback((resolve) => api.removeTree(id, resolve)),
-    move: (id, targetFolderId) =>
-      wrapChromeCallback((resolve) => api.move(id, { parentId: targetFolderId }, resolve))
+    move: (id, destination = {}) =>
+      wrapChromeCallback((resolve) => api.move(id, destination, resolve))
   }
 }
 
@@ -305,7 +321,7 @@ const moveNodeToFolder = async (sourceId, targetFolderId) => {
   try {
     if (hasChromeBookmarks()) {
       const ops = getChromeNodeOps()
-      await ops.move(sourceId, targetFolderId)
+      await ops.move(sourceId, { parentId: String(targetFolderId) })
     }
 
     bookmarkTree.value = moveNodeInTree(bookmarkTree.value, sourceId, targetFolderId)
@@ -318,6 +334,55 @@ const moveNodeToFolder = async (sourceId, targetFolderId) => {
   } finally {
     draggingId.value = ''
     dropTargetId.value = ''
+    dropPosition.value = null
+  }
+}
+
+const normalizeParentId = (value) => {
+  if (value === null || value === undefined || value === '') {
+    return null
+  }
+  return String(value)
+}
+
+const moveNodeToPosition = async (sourceId, targetParentId, targetIndex) => {
+  const source = String(sourceId || '')
+  const parentId = normalizeParentId(targetParentId)
+  if (!source) {
+    onDragEnd()
+    return
+  }
+
+  const position = getMoveToIndexPosition(bookmarkTree.value, source, parentId, Number(targetIndex))
+  if (!position) {
+    onDragEnd()
+    return
+  }
+
+  try {
+    if (hasChromeBookmarks()) {
+      const ops = getChromeNodeOps()
+      const destination = { index: position.index }
+      const isCrossParent = String(position.sourceParentId) !== String(position.targetParentId)
+
+      if (position.parentId !== null) {
+        destination.parentId = String(position.parentId)
+      } else if (isCrossParent && chromeRootFolderId.value) {
+        destination.parentId = chromeRootFolderId.value
+      }
+
+      await ops.move(source, destination)
+    }
+
+    bookmarkTree.value = moveNodeToIndexInTree(bookmarkTree.value, source, position.parentId, position.index)
+    status.value = '已更新排序。'
+    warning.value = hasChromeBookmarks() ? '' : '当前为演示数据，排序仅在页面内生效。'
+  } catch (error) {
+    console.error('reorder failed', error)
+    status.value = '排序失败。'
+    warning.value = error instanceof Error ? error.message : '请检查 Chrome 书签权限。'
+  } finally {
+    onDragEnd()
   }
 }
 
@@ -325,15 +390,41 @@ const onDragStart = (id) => {
   closeContextMenu()
   draggingId.value = String(id)
   dropTargetId.value = ''
+  dropPosition.value = null
 }
 
 const onDragEnd = () => {
   draggingId.value = ''
   dropTargetId.value = ''
+  dropPosition.value = null
 }
 
 const onDropTarget = (id) => {
-  dropTargetId.value = String(id)
+  const nextId = String(id)
+  if (dropTargetId.value === nextId && dropPosition.value === null) {
+    return
+  }
+  dropTargetId.value = nextId
+  dropPosition.value = null
+}
+
+const onDropPosition = (targetParentId, targetIndex) => {
+  const nextPosition = {
+    parentId: normalizeParentId(targetParentId),
+    index: Number.isFinite(Number(targetIndex)) ? Number(targetIndex) : 0
+  }
+
+  const current = dropPosition.value
+  const isSamePosition =
+    current &&
+    current.parentId === nextPosition.parentId &&
+    current.index === nextPosition.index
+  if (dropTargetId.value === '' && isSamePosition) {
+    return
+  }
+
+  dropTargetId.value = ''
+  dropPosition.value = nextPosition
 }
 
 const clamp = (value, min, max) => Math.min(max, Math.max(min, value))
@@ -444,12 +535,16 @@ onBeforeUnmount(() => {
         <div class="module-body">
           <BookmarkGroup
             :nodes="module.nodes"
+            :parent-id="module.node ? module.node.id : null"
             :dragging-id="draggingId"
+            :drop-position="dropPosition"
             :drop-target-id="dropTargetId"
             @drag-start="onDragStart"
             @drag-end="onDragEnd"
             @drop-node="moveNodeToFolder"
+            @drop-at-position="moveNodeToPosition"
             @mark-drop-target="onDropTarget"
+            @mark-drop-position="onDropPosition"
             @open-context-menu="openContextMenu"
           />
         </div>

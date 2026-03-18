@@ -52,6 +52,28 @@ const containsId = (node, targetId) => {
   return node.children.some((child) => containsId(child, targetId))
 }
 
+const findNodeLocation = (nodes = [], targetId, parentId = null) => {
+  for (let index = 0; index < nodes.length; index += 1) {
+    const node = nodes[index]
+    if (String(node.id) === String(targetId)) {
+      return {
+        parentId,
+        index,
+        node
+      }
+    }
+
+    if (hasChildren(node)) {
+      const nested = findNodeLocation(node.children, targetId, node.id)
+      if (nested) {
+        return nested
+      }
+    }
+  }
+
+  return null
+}
+
 const removeNodeRecursive = (nodes = [], targetId) => {
   let removedNode = null
   const nextNodes = []
@@ -100,6 +122,54 @@ const insertNodeIntoFolder = (nodes = [], targetFolderId, nodeToInsert) =>
 
     return { ...node }
   })
+
+const insertNodeAtIndex = (nodes = [], parentId, index, nodeToInsert) => {
+  const nextNode = cloneNode(nodeToInsert)
+  const safeIndex = (length) => Math.max(0, Math.min(index, length))
+
+  if (parentId === null || parentId === undefined) {
+    const next = cloneNodes(nodes)
+    next.splice(safeIndex(next.length), 0, nextNode)
+    return { nodes: next, inserted: true }
+  }
+
+  let inserted = false
+  const next = nodes.map((node) => {
+    if (String(node.id) === String(parentId)) {
+      const children = hasChildren(node) ? cloneNodes(node.children) : []
+      children.splice(safeIndex(children.length), 0, nextNode)
+      inserted = true
+      return {
+        ...node,
+        children
+      }
+    }
+
+    if (hasChildren(node)) {
+      const result = insertNodeAtIndex(node.children, parentId, index, nodeToInsert)
+      if (result.inserted) {
+        inserted = true
+        return {
+          ...node,
+          children: result.nodes
+        }
+      }
+    }
+
+    return { ...node }
+  })
+
+  return { nodes: next, inserted }
+}
+
+const clampIndex = (value, min, max) => Math.max(min, Math.min(max, value))
+
+const normalizeParentId = (parentId) => {
+  if (parentId === null || parentId === undefined || parentId === '') {
+    return null
+  }
+  return String(parentId)
+}
 
 export const pruneNodesByIds = (nodes = [], ids = []) => {
   const idSet = new Set(ids.map(String))
@@ -163,6 +233,100 @@ export const moveNodeInTree = (nodes = [], sourceId, targetFolderId) => {
   }
 
   return insertNodeIntoFolder(removal.nodes, targetFolderId, removal.removedNode)
+}
+
+export const getMoveToIndexPosition = (nodes = [], sourceId, targetParentId, targetIndex) => {
+  const source = String(sourceId || '')
+  if (!source) {
+    return null
+  }
+
+  const sourceLocation = findNodeLocation(nodes, source)
+  if (!sourceLocation) {
+    return null
+  }
+
+  const sourceParent = normalizeParentId(sourceLocation.parentId)
+  const targetParent = normalizeParentId(targetParentId)
+
+  if (targetParent !== null) {
+    const targetParentNode = findNodeById(nodes, targetParent)
+    if (!targetParentNode || !Array.isArray(targetParentNode.children)) {
+      return null
+    }
+  }
+
+  if (targetParent !== null && containsId(sourceLocation.node, targetParent)) {
+    return null
+  }
+
+  const targetSiblings =
+    targetParent === null
+      ? nodes
+      : findNodeById(nodes, targetParent)?.children || []
+  let index = clampIndex(Number.isFinite(Number(targetIndex)) ? Number(targetIndex) : 0, 0, targetSiblings.length)
+
+  if (sourceParent === targetParent && sourceLocation.index < index) {
+    index -= 1
+  }
+
+  return {
+    parentId: targetParent,
+    index: clampIndex(index, 0, targetSiblings.length),
+    sourceParentId: sourceParent,
+    targetParentId: targetParent
+  }
+}
+
+export const getMoveBeforePosition = (nodes = [], sourceId, targetId) => {
+  if (String(sourceId) === String(targetId)) {
+    return null
+  }
+
+  const targetLocation = findNodeLocation(nodes, targetId)
+  if (!targetLocation) {
+    return null
+  }
+
+  return getMoveToIndexPosition(nodes, sourceId, targetLocation.parentId ?? null, targetLocation.index)
+}
+
+export const moveNodeBeforeInTree = (nodes = [], sourceId, targetId) => {
+  const position = getMoveBeforePosition(nodes, sourceId, targetId)
+  if (!position) {
+    return nodes
+  }
+
+  const removal = removeNodeRecursive(nodes, sourceId)
+  if (!removal.removedNode) {
+    return nodes
+  }
+
+  const insertion = insertNodeAtIndex(removal.nodes, position.parentId, position.index, removal.removedNode)
+  if (!insertion.inserted) {
+    return nodes
+  }
+
+  return insertion.nodes
+}
+
+export const moveNodeToIndexInTree = (nodes = [], sourceId, targetParentId, targetIndex) => {
+  const position = getMoveToIndexPosition(nodes, sourceId, targetParentId, targetIndex)
+  if (!position) {
+    return nodes
+  }
+
+  const removal = removeNodeRecursive(nodes, sourceId)
+  if (!removal.removedNode) {
+    return nodes
+  }
+
+  const insertion = insertNodeAtIndex(removal.nodes, position.parentId, position.index, removal.removedNode)
+  if (!insertion.inserted) {
+    return nodes
+  }
+
+  return insertion.nodes
 }
 
 export const isFolderNode = (node) => hasChildren(node)
