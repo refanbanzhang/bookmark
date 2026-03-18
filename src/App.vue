@@ -49,6 +49,8 @@ const bookmarkTree = ref([])
 const loading = ref(true)
 const status = ref('正在加载书签……')
 const warning = ref('')
+const theme = ref('light')
+const THEME_KEY = 'bookmark-theme'
 
 const hasChildren = (node) => Boolean(node?.children?.length)
 const groupedModules = computed(() => {
@@ -124,29 +126,54 @@ const loadBookmarks = () => {
   }
 }
 
-onMounted(loadBookmarks)
+const applyTheme = (value) => {
+  theme.value = value === 'dark' ? 'dark' : 'light'
+  document.documentElement.setAttribute('data-theme', theme.value)
+}
+
+const initTheme = () => {
+  const saved = localStorage.getItem(THEME_KEY)
+  if (saved === 'dark' || saved === 'light') {
+    applyTheme(saved)
+    return
+  }
+  const preferDark = window.matchMedia?.('(prefers-color-scheme: dark)')?.matches
+  applyTheme(preferDark ? 'dark' : 'light')
+}
+
+const toggleTheme = () => {
+  const next = theme.value === 'dark' ? 'light' : 'dark'
+  applyTheme(next)
+  localStorage.setItem(THEME_KEY, next)
+}
+
+onMounted(() => {
+  initTheme()
+  loadBookmarks()
+})
 </script>
 
 <template>
-  <div class="page-shell">
-    <main class="content">
-      <div v-if="loading" class="status">
-        <span class="pulse"></span>
-        {{ status }}
-      </div>
-      <p v-if="warning" class="warning">{{ warning }}</p>
-      <div v-if="!loading && groupedModules.length" class="modules">
-        <section v-for="module in groupedModules" :key="module.id" class="module-section">
-          <h2 class="module-title">{{ module.title }}</h2>
-          <div class="module-body">
-            <BookmarkGroup :nodes="module.nodes" />
-          </div>
-        </section>
-      </div>
-      <p v-else-if="!loading" class="empty">暂无书签，请先在 Chrome 中添加内容。</p>
-      <div v-if="!loading" class="footer-note">
-        点击书签会在新标签页里打开，文件夹左侧的圆点会帮助你分辨图标。
-      </div>
-    </main>
-  </div>
+  <main class="content">
+    <header class="topbar">
+      <h1 class="title">书签主页</h1>
+      <button class="theme-toggle" type="button" @click="toggleTheme">
+        {{ theme === 'dark' ? '浅色模式' : '深色模式' }}
+      </button>
+    </header>
+    <div v-if="loading" class="status">
+      <span class="pulse"></span>
+      {{ status }}
+    </div>
+    <p v-if="warning" class="warning">{{ warning }}</p>
+    <div v-if="!loading && groupedModules.length" class="modules">
+      <section v-for="module in groupedModules" :key="module.id" class="module-section">
+        <h2 class="module-title">{{ module.title }}</h2>
+        <div class="module-body">
+          <BookmarkGroup :nodes="module.nodes" />
+        </div>
+      </section>
+    </div>
+    <p v-else-if="!loading" class="empty">暂无书签，请先在 Chrome 中添加内容。</p>
+  </main>
 </template>

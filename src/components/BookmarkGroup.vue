@@ -43,17 +43,32 @@ watch(
     <li v-for="node in nodes" :key="node.id">
       <div class="bookmark-row" :class="{ folder: hasChildren(node) }">
         <div class="bookmark-content">
-          <img
+          <a
             v-if="node.url && thumbMap[node.id]"
-            class="bookmark-thumb"
-            :src="thumbMap[node.id]"
-            :alt="node.title || '缩略图'"
-            loading="lazy"
-            decoding="async"
-          />
-          <div v-else-if="node.url" class="bookmark-thumb thumb-placeholder">...</div>
+            class="bookmark-thumb-link bookmark-thumb-wrap"
+            :href="node.url"
+            target="_blank"
+            rel="noreferrer"
+            :style="{ '--thumb-bg': `url('${thumbMap[node.id]}')` }"
+          >
+            <img
+              class="bookmark-thumb"
+              :src="thumbMap[node.id]"
+              :alt="node.title || '缩略图'"
+              loading="lazy"
+              decoding="async"
+            />
+          </a>
+          <a
+            v-else-if="node.url"
+            class="bookmark-thumb-link bookmark-thumb thumb-placeholder"
+            :href="node.url"
+            target="_blank"
+            rel="noreferrer"
+          >
+            ...
+          </a>
           <div v-else class="bookmark-thumb folder-thumb">DIR</div>
-          <span class="bookmark-dot" :class="{ folder: hasChildren(node) }"></span>
           <div class="bookmark-text">
             <a v-if="node.url" :href="node.url" target="_blank" rel="noreferrer">
               {{ node.title || '未命名书签' }}
@@ -95,66 +110,104 @@ watch(
   justify-content: center;
   align-items: flex-start;
   gap: 8px;
-  background: #fff;
-  border: 1px solid rgba(15, 23, 42, 0.11);
-  border-radius: 0;
+  background: var(--bookmark-card-bg);
+  border: 1px solid var(--bookmark-card-border);
+  border-radius: 3px;
   width: 124px;
   height: 124px;
   padding: 10px;
-  box-shadow: 0 4px 14px rgba(15, 23, 42, 0.07);
+  box-shadow: var(--bookmark-card-shadow);
   transition: transform 0.16s ease, border-color 0.16s ease, box-shadow 0.16s ease;
 }
 
 .bookmark-thumb {
   width: 100%;
   height: 62px;
-  object-fit: cover;
-  object-position: top center;
-  border: 1px solid rgba(15, 23, 42, 0.14);
-  background: #f8fafc;
+  padding: 6px;
+  object-fit: contain;
+  object-position: center;
+  position: relative;
+  z-index: 1;
+}
+
+.bookmark-thumb-link {
+  display: block;
+  text-decoration: none;
+}
+
+.bookmark-thumb-wrap {
+  width: 100%;
+  height: 62px;
+  border: 1px solid var(--thumb-border);
+  box-shadow:
+    0 1px 2px rgba(15, 23, 42, 0.06),
+    var(--thumb-inset);
+  border-radius: 3px;
+  position: relative;
+  overflow: hidden;
+  background: var(--thumb-surface);
+}
+
+.bookmark-thumb-wrap::before {
+  content: '';
+  position: absolute;
+  inset: -20%;
+  background-image: var(--thumb-bg);
+  background-size: cover;
+  background-position: center;
+  filter: blur(12px) saturate(1.1);
+  transform: scale(1.2);
+  opacity: 0.75;
+}
+
+.bookmark-thumb-wrap::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.2) 0%, rgba(255, 255, 255, 0.06) 100%);
 }
 
 .folder-thumb {
   display: flex;
   align-items: center;
   justify-content: center;
+  padding: 0;
+  border: 1px solid var(--thumb-border);
+  box-shadow:
+    0 1px 2px rgba(15, 23, 42, 0.06),
+    var(--thumb-inset);
+  border-radius: 3px;
   font-size: 12px;
   font-weight: 700;
-  color: #1d4ed8;
-  background: linear-gradient(180deg, #eaf3ff 0%, #f8fbff 100%);
+  color: var(--folder-thumb-text);
+  background: var(--folder-thumb-bg);
 }
 
 .thumb-placeholder {
   display: flex;
   align-items: center;
   justify-content: center;
-  color: #64748b;
+  padding: 0;
+  border: 1px solid var(--thumb-border);
+  box-shadow:
+    0 1px 2px rgba(15, 23, 42, 0.06),
+    var(--thumb-inset);
+  border-radius: 3px;
+  color: var(--thumb-placeholder-text);
   font-size: 12px;
   font-weight: 600;
-  background: #f1f5f9;
+  background: var(--thumb-placeholder-bg);
 }
 
 .bookmark-content:hover {
   transform: translateY(-2px);
-  border-color: rgba(37, 99, 235, 0.42);
-  box-shadow: 0 8px 18px rgba(37, 99, 235, 0.16);
+  border-color: var(--bookmark-hover-border);
+  box-shadow: var(--bookmark-hover-shadow);
 }
 
 .bookmark-row.folder .bookmark-content {
-  background: linear-gradient(180deg, rgba(239, 246, 255, 0.95) 0%, rgba(255, 255, 255, 0.98) 100%);
-  border-color: rgba(37, 99, 235, 0.24);
-}
-
-.bookmark-dot {
-  width: 8px;
-  height: 8px;
-  border-radius: 0;
-  background: rgba(37, 99, 235, 0.5);
-  flex-shrink: 0;
-}
-
-.bookmark-dot.folder {
-  background: #2563eb;
+  background: var(--folder-card-bg);
+  border-color: var(--folder-card-border);
 }
 
 .bookmark-text {
@@ -169,7 +222,7 @@ watch(
   font-weight: 600;
   font-size: 13px;
   line-height: 1.2;
-  color: #0f172a;
+  color: var(--bookmark-text);
   text-decoration: none;
   word-break: break-word;
   overflow: hidden;
@@ -179,15 +232,15 @@ watch(
 }
 
 .bookmark-text span {
-  color: #0f172a;
+  color: var(--bookmark-text);
 }
 
 .bookmark-text a:hover {
-  color: #2563eb;
+  color: var(--bookmark-link-hover);
 }
 
 .bookmark-row.folder .bookmark-text > span:first-child {
-  color: #1d4ed8;
+  color: var(--folder-title-text);
 }
 
 @media (max-width: 768px) {
@@ -198,6 +251,10 @@ watch(
   }
 
   .bookmark-thumb {
+    height: 48px;
+  }
+
+  .bookmark-thumb-wrap {
     height: 48px;
   }
 
