@@ -253,7 +253,7 @@ const forwardDragEnd = (event) => emit('drag-end', event)
   gap: 8px;
   background: var(--bookmark-card-bg);
   border: 1px solid var(--bookmark-card-border);
-  border-radius: 3px;
+  border-radius: var(--radius-base);
   width: 124px;
   height: 124px;
   padding: 10px;
@@ -307,7 +307,7 @@ const forwardDragEnd = (event) => emit('drag-end', event)
   box-shadow:
     0 1px 2px rgba(15, 23, 42, 0.06),
     var(--thumb-inset);
-  border-radius: 3px;
+  border-radius: var(--radius-base);
   position: relative;
   overflow: hidden;
   background: var(--thumb-surface);
@@ -342,7 +342,7 @@ const forwardDragEnd = (event) => emit('drag-end', event)
   box-shadow:
     0 1px 2px rgba(15, 23, 42, 0.06),
     var(--thumb-inset);
-  border-radius: 3px;
+  border-radius: var(--radius-base);
   font-size: 12px;
   font-weight: 700;
   color: var(--folder-thumb-text);
@@ -358,7 +358,7 @@ const forwardDragEnd = (event) => emit('drag-end', event)
   box-shadow:
     0 1px 2px rgba(15, 23, 42, 0.06),
     var(--thumb-inset);
-  border-radius: 3px;
+  border-radius: var(--radius-base);
   color: var(--thumb-placeholder-text);
   font-size: 12px;
   font-weight: 600;
