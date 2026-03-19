@@ -5,6 +5,7 @@ import {
   findNodeById,
   getNodeLocation,
   hasChildren,
+  moveNodeToFinalIndexInTree,
   pruneNodesByIds,
   renameNodeInTree,
   replaceNodesAtParent
@@ -305,6 +306,28 @@ const getChromeMoveParentId = (parentId, fallbackRootId = '') => {
   return fallbackRootId || undefined
 }
 
+const getChromeMoveIndex = (event) => {
+  const oldIndex = Number.isInteger(event.oldDraggableIndex) ? event.oldDraggableIndex : event.oldIndex
+  const newIndex = Number.isInteger(event.newDraggableIndex) ? event.newDraggableIndex : event.newIndex
+  const sourceParentId = normalizeParentId(event.from?.dataset.groupParentId || null)
+  const targetParentId = normalizeParentId(event.to?.dataset.groupParentId || null)
+
+  if (!Number.isInteger(newIndex) || newIndex < 0) {
+    return null
+  }
+
+  if (
+    Number.isInteger(oldIndex) &&
+    oldIndex >= 0 &&
+    sourceParentId === targetParentId &&
+    oldIndex < newIndex
+  ) {
+    return newIndex + 1
+  }
+
+  return newIndex
+}
+
 const clamp = (value, min, max) => Math.min(max, Math.max(min, value))
 
 const nodeContainsId = (node, targetId) => {
@@ -322,11 +345,15 @@ const nodeContainsId = (node, targetId) => {
 
 const canMoveNode = (draggedId, targetParentId) => {
   const sourceNode = findNodeById(bookmarkTree.value, draggedId)
+  const sourceLocation = getNodeLocation(bookmarkTree.value, draggedId)
   if (!sourceNode) {
     return false
   }
+  if (!sourceLocation) {
+    return false
+  }
   if (!targetParentId) {
-    return true
+    return sourceLocation.parentId === null
   }
   if (String(sourceNode.id) === String(targetParentId)) {
     return false
@@ -354,19 +381,27 @@ const handleDragEnd = async (event) => {
     return
   }
 
-  await nextTick()
-  const location = getNodeLocation(bookmarkTree.value, targetId)
-  if (!location) {
+  const targetParentId = normalizeParentId(event.to?.dataset.groupParentId || null)
+  const nextIndex = Number.isInteger(event.newDraggableIndex) ? event.newDraggableIndex : event.newIndex
+  if (!Number.isInteger(nextIndex) || nextIndex < 0) {
     return
   }
+
+  bookmarkTree.value = moveNodeToFinalIndexInTree(bookmarkTree.value, targetId, targetParentId, nextIndex)
+  await nextTick()
 
   try {
     if (hasChromeBookmarks()) {
       const ops = getChromeNodeOps()
+      const chromeMoveIndex = getChromeMoveIndex(event)
+      if (!Number.isInteger(chromeMoveIndex) || chromeMoveIndex < 0) {
+        return
+      }
       await ops.move(targetId, {
-        parentId: getChromeMoveParentId(normalizeParentId(location.parentId), chromeRootFolderId.value),
-        index: location.index
+        parentId: getChromeMoveParentId(targetParentId, chromeRootFolderId.value),
+        index: chromeMoveIndex
       })
+      await loadBookmarks()
     }
 
     status.value = '已更新书签顺序。'

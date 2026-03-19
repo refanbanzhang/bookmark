@@ -1,6 +1,11 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { getMoveToIndexPosition, moveNodeToIndexInTree, swapNodesInTree } from '../src/utils/bookmarkTree.js'
+import {
+  getMoveToIndexPosition,
+  moveNodeToFinalIndexInTree,
+  moveNodeToIndexInTree,
+  swapNodesInTree
+} from '../src/utils/bookmarkTree.js'
 
 const makeTree = () => [
   {
@@ -48,6 +53,14 @@ test('moveNodeToIndexInTree supports moving child to parent sibling list', () =>
   assert.deepEqual(
     moved[0].children.find((node) => node.id === 'b3').children.map((node) => node.id),
     ['b3-1']
+  )
+})
+
+test('moveNodeToFinalIndexInTree places node at final same-parent index', () => {
+  const moved = moveNodeToFinalIndexInTree(makeTree(), 'b1', 'bar', 2)
+  assert.deepEqual(
+    moved[0].children.map((node) => node.id),
+    ['b2', 'b3', 'b1']
   )
 })
 

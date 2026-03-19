@@ -412,4 +412,45 @@ export const moveNodeToIndexInTree = (nodes = [], sourceId, targetParentId, targ
   return insertion.nodes
 }
 
+export const moveNodeToFinalIndexInTree = (nodes = [], sourceId, targetParentId, targetIndex) => {
+  const source = String(sourceId || '')
+  if (!source) {
+    return nodes
+  }
+
+  const sourceLocation = findNodeLocation(nodes, source)
+  if (!sourceLocation) {
+    return nodes
+  }
+
+  const targetParent = normalizeParentId(targetParentId)
+  if (targetParent !== null) {
+    const targetParentNode = findNodeById(nodes, targetParent)
+    if (!targetParentNode || !Array.isArray(targetParentNode.children)) {
+      return nodes
+    }
+    if (containsId(sourceLocation.node, targetParent)) {
+      return nodes
+    }
+  }
+
+  const removal = removeNodeRecursive(nodes, source)
+  if (!removal.removedNode) {
+    return nodes
+  }
+
+  const targetSiblings =
+    targetParent === null
+      ? removal.nodes
+      : findNodeById(removal.nodes, targetParent)?.children || []
+  const index = clampIndex(Number.isFinite(Number(targetIndex)) ? Number(targetIndex) : 0, 0, targetSiblings.length)
+
+  const insertion = insertNodeAtIndex(removal.nodes, targetParent, index, removal.removedNode)
+  if (!insertion.inserted) {
+    return nodes
+  }
+
+  return insertion.nodes
+}
+
 export const isFolderNode = (node) => hasChildren(node)

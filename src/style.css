@@ -404,7 +404,7 @@ body {
 }
 
 .module-body {
-  overflow-x: auto;
+  overflow: visible;
 }
 
 .drag-preview {
