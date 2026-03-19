@@ -5,6 +5,7 @@
 ## 特性
 - 利用 `chrome.bookmarks` API 读取书签树，按文件夹/书签区分展示。
 - 纯 Vue 3 组件递归渲染目录，展示文件夹、书签、域名信息。
+- 支持配置页面背景图，可用图片 URL 或本地上传，配置会持久化到本地。
 - 可用作 Chrome 新标签页（`chrome_url_overrides.newtab` 指向构建产物）。
 - 在不支持 Chrome API 的环境下自动回退到演示数据，方便调试。
 

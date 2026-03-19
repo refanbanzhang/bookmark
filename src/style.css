@@ -6,6 +6,7 @@
   --shell-bg-mid: rgba(255, 255, 255, 0.95);
   --shell-bg-end: #ffffff;
   --content-bg: rgba(255, 255, 255, 0.82);
+  --content-bg-with-image: rgba(255, 255, 255, 0.24);
   --text: #0f172a;
   --muted: #475569;
   --border: rgba(15, 23, 42, 0.12);
@@ -68,6 +69,7 @@
   --shell-bg-mid: rgba(15, 23, 42, 0.95);
   --shell-bg-end: #0f172a;
   --content-bg: rgba(15, 23, 42, 0.72);
+  --content-bg-with-image: rgba(15, 23, 42, 0.32);
   --text: #e2e8f0;
   --muted: #94a3b8;
   --border: rgba(148, 163, 184, 0.2);
@@ -122,9 +124,7 @@
 
 body {
   margin: 0;
-  background: radial-gradient(circle at top right, var(--page-grad-1), transparent 55%),
-    radial-gradient(circle at 25% 20%, var(--page-grad-2), transparent 40%),
-    var(--page-bg);
+  background: var(--page-bg);
   min-height: 100vh;
   color: var(--text);
   overflow: hidden;
@@ -133,23 +133,51 @@ body {
 #app {
   width: 100%;
   height: 100vh;
-  display: flex;
-  justify-content: flex-start;
-  align-items: flex-start;
-  padding: 0;
+}
+
+.page-shell {
+  position: relative;
+  width: 100%;
+  height: 100vh;
+  overflow: hidden;
+}
+
+.page-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 0;
+  pointer-events: none;
+  background-color: var(--page-bg);
+  background-position: center;
+  background-size: cover;
+  background-repeat: no-repeat;
+  transform: scale(1.02);
+  opacity: 0;
+  transition:
+    opacity 0.2s ease,
+    transform 0.2s ease;
+}
+
+.page-backdrop.is-active {
+  opacity: 1;
 }
 
 .content {
   position: relative;
-  flex: 1 1 auto;
+  z-index: 1;
   width: 100%;
   min-width: 0;
   height: 100%;
   padding: 36px 64px 48px;
   background: var(--content-bg);
+  backdrop-filter: blur(16px) saturate(1.15);
   overflow: auto;
   scrollbar-width: none;
   -ms-overflow-style: none;
+}
+
+.content.content-with-background {
+  background: var(--content-bg-with-image);
 }
 
 .content::-webkit-scrollbar {
@@ -545,6 +573,10 @@ body {
   padding: 18px;
 }
 
+.modal-card-wide {
+  width: min(520px, 100%);
+}
+
 .modal-header {
   display: flex;
   align-items: center;
@@ -618,6 +650,106 @@ body {
   box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.12);
 }
 
+.background-settings-layout {
+  display: grid;
+  gap: 14px;
+}
+
+.background-settings-panel {
+  display: grid;
+  gap: 12px;
+  padding: 14px;
+  border: 1px solid var(--module-border);
+  border-radius: var(--radius-base);
+  background: var(--module-bg);
+}
+
+.background-settings-panel-controls {
+  gap: 14px;
+}
+
+.modal-field-range {
+  gap: 10px;
+}
+
+.modal-field-range input {
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  box-shadow: none;
+  accent-color: var(--accent);
+}
+
+.modal-field-range input:focus {
+  border-color: transparent;
+  box-shadow: none;
+}
+
+.range-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 12px;
+}
+
+.range-row strong {
+  min-width: 48px;
+  text-align: right;
+  font-size: 13px;
+  color: var(--text);
+}
+
+.background-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.background-switch {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: 14px;
+  font-weight: 600;
+  font-size: 13px;
+}
+
+.background-switch input {
+  width: 16px;
+  height: 16px;
+  margin: 0;
+}
+
+.background-preview {
+  margin-top: 16px;
+  width: 100%;
+  aspect-ratio: 16 / 9;
+  border-radius: var(--radius-base);
+  border: 1px solid var(--module-border);
+  background-color: var(--thumb-surface);
+  background-position: center;
+  background-repeat: no-repeat;
+  background-size: cover;
+  overflow: hidden;
+}
+
+.background-preview::after {
+  content: '预览';
+  display: inline-flex;
+  align-items: flex-end;
+  justify-content: flex-start;
+  width: 100%;
+  height: 100%;
+  padding: 12px;
+  color: rgba(255, 255, 255, 0.86);
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-shadow: 0 2px 8px rgba(2, 6, 23, 0.5);
+  background: linear-gradient(180deg, rgba(2, 6, 23, 0.02) 0%, rgba(2, 6, 23, 0.2) 100%);
+  box-sizing: border-box;
+}
+
 .modal-error {
   margin: 10px 0 0;
   color: var(--warning-text);
@@ -629,6 +761,18 @@ body {
   justify-content: flex-end;
   gap: 10px;
   margin-top: 18px;
+}
+
+.visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
 }
 
 @keyframes pulse {
@@ -688,5 +832,19 @@ body {
   .modal-card {
     padding: 16px;
     border-radius: var(--radius-base);
+  }
+
+  .background-settings-panel {
+    padding: 12px;
+  }
+
+  .range-row {
+    grid-template-columns: 1fr;
+    gap: 6px;
+  }
+
+  .range-row strong {
+    min-width: 0;
+    text-align: left;
   }
 }

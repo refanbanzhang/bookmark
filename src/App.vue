@@ -10,6 +10,12 @@ import {
   renameNodeInTree,
   replaceNodesAtParent
 } from './utils/bookmarkTree'
+import {
+  clearBackgroundSettings,
+  createDefaultBackgroundSettings,
+  loadBackgroundSettings,
+  saveBackgroundSettings
+} from './utils/backgroundSettings'
 
 const fallbackTree = [
   {
@@ -40,6 +46,11 @@ const status = ref('正在加载书签……')
 const warning = ref('')
 const theme = ref('light')
 const minimalMode = ref(false)
+const backgroundSettings = ref(createDefaultBackgroundSettings())
+const backgroundDraft = ref(createDefaultBackgroundSettings())
+const backgroundSettingsOpen = ref(false)
+const backgroundError = ref('')
+const backgroundFileInput = ref(null)
 const chromeRootFolderId = ref('1')
 const editingNode = ref(null)
 const editingTitle = ref('')
@@ -72,6 +83,50 @@ const contextMenuStyle = computed(() => ({
   left: `${contextMenu.value.x}px`,
   top: `${contextMenu.value.y}px`
 }))
+const hasBackgroundImage = computed(
+  () => backgroundSettings.value.enabled && Boolean(backgroundSettings.value.imageUrl)
+)
+
+const pageBackdropStyle = computed(() => {
+  if (!hasBackgroundImage.value) {
+    return {}
+  }
+
+  return {
+    backgroundImage: `url(${JSON.stringify(backgroundSettings.value.imageUrl)})`,
+    backgroundPosition: backgroundSettings.value.position,
+    backgroundRepeat: backgroundSettings.value.repeat,
+    backgroundSize: backgroundSettings.value.size,
+    opacity: backgroundSettings.value.opacity
+  }
+})
+
+const backgroundPreviewStyle = computed(() => {
+  if (!backgroundDraft.value.imageUrl) {
+    return {}
+  }
+
+  return {
+    backgroundImage: `url(${JSON.stringify(backgroundDraft.value.imageUrl)})`,
+    backgroundPosition: backgroundDraft.value.position,
+    backgroundRepeat: backgroundDraft.value.repeat,
+    backgroundSize: backgroundDraft.value.size,
+    opacity: backgroundDraft.value.opacity
+  }
+})
+
+const contentStyle = computed(() => {
+  if (!hasBackgroundImage.value) {
+    return {}
+  }
+
+  const blur = backgroundSettings.value.backdropBlur
+
+  return {
+    background: 'transparent',
+    backdropFilter: blur > 0 ? `blur(${blur}px) saturate(1.05)` : 'none'
+  }
+})
 
 const hasChromeBookmarks = () => typeof window !== 'undefined' && Boolean(window.chrome?.bookmarks)
 
@@ -149,6 +204,88 @@ const initMinimalMode = () => {
 const toggleMinimalMode = () => {
   minimalMode.value = !minimalMode.value
   localStorage.setItem(MINIMAL_MODE_KEY, String(minimalMode.value))
+}
+
+const initBackgroundSettings = () => {
+  backgroundSettings.value = loadBackgroundSettings()
+}
+
+const openBackgroundSettings = () => {
+  closeContextMenu()
+  backgroundDraft.value = { ...backgroundSettings.value }
+  backgroundError.value = ''
+  backgroundSettingsOpen.value = true
+}
+
+const closeBackgroundSettings = () => {
+  backgroundSettingsOpen.value = false
+  backgroundError.value = ''
+}
+
+const persistBackgroundSettings = (nextSettings) => {
+  const saved = saveBackgroundSettings(nextSettings)
+  backgroundSettings.value = saved
+  backgroundDraft.value = { ...saved }
+  backgroundError.value = ''
+  return saved
+}
+
+const saveBackgroundSettingsForm = () => {
+  const nextImageUrl = backgroundDraft.value.imageUrl.trim()
+
+  if (backgroundDraft.value.enabled && !nextImageUrl) {
+    backgroundError.value = '请先填写背景图地址或上传图片。'
+    return
+  }
+
+  persistBackgroundSettings({
+    ...backgroundDraft.value,
+    imageUrl: nextImageUrl,
+    enabled: backgroundDraft.value.enabled || Boolean(nextImageUrl)
+  })
+  closeBackgroundSettings()
+}
+
+const clearBackgroundImage = () => {
+  const cleared = clearBackgroundSettings()
+  backgroundSettings.value = cleared
+  backgroundDraft.value = { ...cleared }
+  backgroundError.value = ''
+}
+
+const triggerBackgroundUpload = () => {
+  backgroundFileInput.value?.click?.()
+}
+
+const readFileAsDataUrl = (file) =>
+  new Promise((resolve, reject) => {
+    const reader = new FileReader()
+    reader.onload = () => resolve(typeof reader.result === 'string' ? reader.result : '')
+    reader.onerror = () => reject(reader.error || new Error('读取图片失败。'))
+    reader.readAsDataURL(file)
+  })
+
+const handleBackgroundUpload = async (event) => {
+  const file = event.target.files?.[0]
+  event.target.value = ''
+
+  if (!file) {
+    return
+  }
+
+  if (!file.type.startsWith('image/')) {
+    backgroundError.value = '请选择图片文件。'
+    return
+  }
+
+  try {
+    const dataUrl = await readFileAsDataUrl(file)
+    backgroundDraft.value.imageUrl = dataUrl
+    backgroundDraft.value.enabled = true
+    backgroundError.value = ''
+  } catch (error) {
+    backgroundError.value = error instanceof Error ? error.message : '读取图片失败。'
+  }
 }
 
 const syncStatusForMode = () => {
@@ -467,6 +604,7 @@ watch(editingNode, async (node) => {
 onMounted(() => {
   initTheme()
   initMinimalMode()
+  initBackgroundSettings()
   void loadBookmarks()
   window.addEventListener('resize', closeContextMenu)
   window.addEventListener('scroll', closeContextMenu, true)
@@ -479,43 +617,122 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <main class="content" @click="closeContextMenu">
-    <header class="topbar">
-      <div class="topbar-brand">
-        <h1 class="title">书签主页</h1>
-      </div>
-      <div class="topbar-actions">
-        <button class="theme-toggle" type="button" @click="toggleMinimalMode">
-          {{ minimalMode ? '缩略图模式' : '极简模式' }}
-        </button>
-        <button class="theme-toggle" type="button" @click="toggleTheme">
-          {{ theme === 'dark' ? '浅色模式' : '深色模式' }}
-        </button>
-      </div>
-    </header>
+  <main class="page-shell" @click="closeContextMenu">
+    <div class="page-backdrop" :class="{ 'is-active': hasBackgroundImage }" :style="pageBackdropStyle"></div>
 
-    <div v-if="loading" class="status">
-      <span class="pulse"></span>
-      {{ status }}
+    <div class="content" :class="{ 'content-with-background': hasBackgroundImage }" :style="contentStyle">
+      <header class="topbar">
+        <div class="topbar-brand">
+          <h1 class="title">书签主页</h1>
+        </div>
+        <div class="topbar-actions">
+          <button class="theme-toggle" type="button" @click="openBackgroundSettings">
+            {{ hasBackgroundImage ? '更换背景图' : '设置背景图' }}
+          </button>
+          <button class="theme-toggle" type="button" @click="toggleMinimalMode">
+            {{ minimalMode ? '缩略图模式' : '极简模式' }}
+          </button>
+          <button class="theme-toggle" type="button" @click="toggleTheme">
+            {{ theme === 'dark' ? '浅色模式' : '深色模式' }}
+          </button>
+        </div>
+      </header>
+
+      <div v-if="loading" class="status">
+        <span class="pulse"></span>
+        {{ status }}
+      </div>
+
+      <p v-if="warning" class="warning">{{ warning }}</p>
+
+      <div v-if="!loading && bookmarkTree.length" class="modules">
+        <BookmarkGroup
+          :nodes="bookmarkTree"
+          :parent-id="null"
+          :depth="0"
+          :minimal-mode="minimalMode"
+          :can-move="canMoveNode"
+          @drag-end="handleDragEnd"
+          @open-bookmark="openBookmarkUrl"
+          @open-context-menu="openContextMenu"
+          @replace-nodes="handleReplaceNodes"
+        />
+      </div>
+
+      <p v-else-if="!loading" class="empty">暂无书签，请先在 Chrome 中添加内容。</p>
     </div>
 
-    <p v-if="warning" class="warning">{{ warning }}</p>
+    <div v-if="backgroundSettingsOpen" class="modal-overlay" @click.self="closeBackgroundSettings">
+      <div class="modal-card modal-card-wide" role="dialog" aria-modal="true" aria-label="配置背景图">
+        <div class="modal-header">
+          <h3 class="modal-title">配置背景图</h3>
+          <button class="modal-close" type="button" @click="closeBackgroundSettings">×</button>
+        </div>
 
-    <div v-if="!loading && bookmarkTree.length" class="modules">
-      <BookmarkGroup
-        :nodes="bookmarkTree"
-        :parent-id="null"
-        :depth="0"
-        :minimal-mode="minimalMode"
-        :can-move="canMoveNode"
-        @drag-end="handleDragEnd"
-        @open-bookmark="openBookmarkUrl"
-        @open-context-menu="openContextMenu"
-        @replace-nodes="handleReplaceNodes"
-      />
+        <p class="modal-meta">支持图片地址或本地上传，保存后会持久化到本地。</p>
+
+        <div class="background-settings-layout">
+          <section class="background-settings-panel">
+            <label class="modal-field">
+              <span>图片地址</span>
+              <input
+                v-model="backgroundDraft.imageUrl"
+                type="url"
+                placeholder="https://example.com/background.jpg"
+                spellcheck="false"
+              />
+            </label>
+
+            <div class="background-actions">
+              <button class="action-button" type="button" @click="triggerBackgroundUpload">上传本地图片</button>
+              <button class="action-button" type="button" @click="clearBackgroundImage">清除背景</button>
+            </div>
+          </section>
+
+          <section class="background-settings-panel background-settings-panel-controls">
+            <label class="modal-field modal-field-range">
+              <span>背景显示强度</span>
+              <div class="range-row">
+                <input v-model.number="backgroundDraft.opacity" type="range" min="0.2" max="1" step="0.01" />
+                <strong>{{ Math.round(backgroundDraft.opacity * 100) }}%</strong>
+              </div>
+            </label>
+
+            <label class="modal-field modal-field-range">
+              <span>磨砂强度</span>
+              <div class="range-row">
+                <input v-model.number="backgroundDraft.backdropBlur" type="range" min="0" max="24" step="1" />
+                <strong>{{ Math.round(backgroundDraft.backdropBlur) }}px</strong>
+              </div>
+            </label>
+
+            <label class="background-switch">
+              <input v-model="backgroundDraft.enabled" type="checkbox" />
+              <span>启用背景图</span>
+            </label>
+          </section>
+        </div>
+
+        <div v-if="backgroundPreviewStyle.backgroundImage" class="background-preview" :style="backgroundPreviewStyle"></div>
+
+        <p v-if="backgroundError" class="modal-error">{{ backgroundError }}</p>
+
+        <div class="modal-actions">
+          <button class="action-button" type="button" @click="closeBackgroundSettings">取消</button>
+          <button class="action-button action-button-primary" type="button" @click="saveBackgroundSettingsForm">
+            保存
+          </button>
+        </div>
+
+        <input
+          ref="backgroundFileInput"
+          class="visually-hidden"
+          type="file"
+          accept="image/*"
+          @change="handleBackgroundUpload"
+        />
+      </div>
     </div>
-
-    <p v-else-if="!loading" class="empty">暂无书签，请先在 Chrome 中添加内容。</p>
 
     <div v-if="editingNode" class="modal-overlay" @click.self="closeEdit">
       <div class="modal-card" role="dialog" aria-modal="true" :aria-label="`重命名${editingKind}`">
