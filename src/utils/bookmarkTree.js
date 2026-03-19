@@ -224,6 +224,30 @@ export const renameNodeInTree = (nodes = [], targetId, title) =>
     return { ...node }
   })
 
+export const replaceNodesAtParent = (nodes = [], parentId, nextChildren = []) => {
+  if (parentId === null || parentId === undefined || parentId === '') {
+    return cloneNodes(nextChildren)
+  }
+
+  return nodes.map((node) => {
+    if (String(node.id) === String(parentId)) {
+      return {
+        ...node,
+        children: cloneNodes(nextChildren)
+      }
+    }
+
+    if (hasChildren(node)) {
+      return {
+        ...node,
+        children: replaceNodesAtParent(node.children, parentId, nextChildren)
+      }
+    }
+
+    return { ...node }
+  })
+}
+
 export const moveNodeInTree = (nodes = [], sourceId, targetFolderId) => {
   if (String(sourceId) === String(targetFolderId)) {
     return nodes
