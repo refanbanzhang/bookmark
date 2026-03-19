@@ -132,14 +132,11 @@ const forwardDragEnd = (event) => emit('drag-end', event)
     >
       <section v-if="isRootFolder(node)" class="module-section folder">
         <div
-          class="module-header module-header-title drag-handle"
+          class="module-header-title module-folder-title drag-handle"
           @contextmenu.prevent.stop="onContextMenu(node, $event)"
         >
           <span>{{ node.title || '未命名目录' }}</span>
         </div>
-
-        <div class="module-drop-hint">可拖拽排序，也可拖入其它文件夹</div>
-
         <div class="module-body">
           <BookmarkGroup
             :nodes="node.children"
@@ -227,10 +224,6 @@ const forwardDragEnd = (event) => emit('drag-end', event)
   flex-wrap: wrap;
   align-items: flex-start;
   gap: 8px;
-}
-
-.bookmark-group.depth-0 {
-  gap: 16px;
 }
 
 .bookmark-item {

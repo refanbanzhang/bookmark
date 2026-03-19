@@ -436,7 +436,6 @@ onBeforeUnmount(() => {
     <header class="topbar">
       <div class="topbar-brand">
         <h1 class="title">书签主页</h1>
-        <p class="title-subtitle">右键书签或文件夹可重命名/删除</p>
       </div>
       <div class="topbar-actions">
         <button class="theme-toggle" type="button" @click="toggleTheme">
