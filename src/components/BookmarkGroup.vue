@@ -18,6 +18,10 @@ const props = defineProps({
     type: Number,
     default: 0
   },
+  minimalMode: {
+    type: Boolean,
+    default: false
+  },
   canMove: {
     type: Function,
     default: null
@@ -44,7 +48,7 @@ const hasChildren = (node) => Array.isArray(node?.children) && node.children.len
 const isRootFolder = (node) => props.depth === 0 && hasChildren(node)
 
 const loadThumb = async (node) => {
-  if (!node?.url) return
+  if (props.minimalMode || !node?.url) return
   const src = await getThumbnailForUrl(node.url)
   if (src) {
     thumbMap.value[node.id] = src
@@ -52,8 +56,12 @@ const loadThumb = async (node) => {
 }
 
 watch(
-  () => props.nodes,
-  (nodes) => {
+  () => [props.nodes, props.minimalMode],
+  ([nodes, minimalMode]) => {
+    if (minimalMode) {
+      thumbMap.value = {}
+      return
+    }
     for (const node of nodes || []) {
       loadThumb(node)
     }
@@ -105,7 +113,7 @@ const forwardDragEnd = (event) => emit('drag-end', event)
     ref="groupRef"
     tag="ul"
     class="bookmark-group"
-    :class="depthClass"
+    :class="[depthClass, { 'is-minimal': minimalMode }]"
     :model-value="nodes"
     :animation="180"
     :data-group-parent-id="parentIdValue"
@@ -142,6 +150,7 @@ const forwardDragEnd = (event) => emit('drag-end', event)
             :nodes="node.children"
             :parent-id="node.id"
             :depth="depth + 1"
+            :minimal-mode="minimalMode"
             :can-move="canMove"
             @drag-end="forwardDragEnd"
             @open-bookmark="forwardOpenBookmark"
@@ -154,42 +163,45 @@ const forwardDragEnd = (event) => emit('drag-end', event)
       <div v-else class="bookmark-row" :class="{ folder: hasChildren(node) }">
         <div
           class="bookmark-content drag-handle"
+          :class="{ 'is-minimal': minimalMode }"
           @click="onContentClick(node, $event)"
           @contextmenu="onContextMenu(node, $event)"
         >
-          <a
-            v-if="node.url && thumbMap[node.id]"
-            class="bookmark-thumb-link bookmark-thumb-wrap"
-            :href="node.url"
-            target="_blank"
-            rel="noreferrer"
-            draggable="false"
-            :style="{ '--thumb-bg': `url('${thumbMap[node.id]}')` }"
-            @click.stop
-          >
-            <img
-              class="bookmark-thumb"
-              :src="thumbMap[node.id]"
-              :alt="node.title || '缩略图'"
+          <template v-if="!minimalMode">
+            <a
+              v-if="node.url && thumbMap[node.id]"
+              class="bookmark-thumb-link bookmark-thumb-wrap"
+              :href="node.url"
+              target="_blank"
+              rel="noreferrer"
               draggable="false"
-              loading="lazy"
-              decoding="async"
-            />
-          </a>
-          <a
-            v-else-if="node.url"
-            class="bookmark-thumb-link bookmark-thumb thumb-placeholder"
-            :href="node.url"
-            target="_blank"
-            rel="noreferrer"
-            draggable="false"
-            @click.stop
-          >
-            ...
-          </a>
-          <div v-else class="bookmark-thumb folder-thumb">DIR</div>
+              :style="{ '--thumb-bg': `url('${thumbMap[node.id]}')` }"
+              @click.stop
+            >
+              <img
+                class="bookmark-thumb"
+                :src="thumbMap[node.id]"
+                :alt="node.title || '缩略图'"
+                draggable="false"
+                loading="lazy"
+                decoding="async"
+              />
+            </a>
+            <a
+              v-else-if="node.url"
+              class="bookmark-thumb-link bookmark-thumb thumb-placeholder"
+              :href="node.url"
+              target="_blank"
+              rel="noreferrer"
+              draggable="false"
+              @click.stop
+            >
+              ...
+            </a>
+            <div v-else class="bookmark-thumb folder-thumb">DIR</div>
+          </template>
 
-          <div class="bookmark-text">
+          <div class="bookmark-text" :class="{ 'is-minimal': minimalMode }">
             <a v-if="node.url" :href="node.url" target="_blank" rel="noreferrer" draggable="false" @click.stop>
               {{ node.title || '未命名书签' }}
             </a>
@@ -203,6 +215,7 @@ const forwardDragEnd = (event) => emit('drag-end', event)
         :nodes="node.children"
         :parent-id="node.id"
         :depth="depth + 1"
+        :minimal-mode="minimalMode"
         :can-move="canMove"
         @drag-end="forwardDragEnd"
         @open-bookmark="forwardOpenBookmark"
@@ -226,8 +239,33 @@ const forwardDragEnd = (event) => emit('drag-end', event)
   gap: 8px;
 }
 
+.bookmark-group.is-minimal {
+  display: grid;
+  gap: 6px;
+}
+
+.bookmark-group.is-minimal.depth-1 {
+  padding-left: 12px;
+}
+
+.bookmark-group.is-minimal.depth-2 {
+  padding-left: 24px;
+}
+
+.bookmark-group.is-minimal.depth-3 {
+  padding-left: 36px;
+}
+
+.bookmark-group.is-minimal.depth-4 {
+  padding-left: 48px;
+}
+
 .bookmark-item {
   list-style: none;
+}
+
+.bookmark-group.is-minimal > .bookmark-item {
+  width: 100%;
 }
 
 .bookmark-item.is-root-folder {
@@ -260,6 +298,21 @@ const forwardDragEnd = (event) => emit('drag-end', event)
   touch-action: none;
 }
 
+.bookmark-content.is-minimal {
+  display: flex;
+  width: 100%;
+  max-width: none;
+  height: auto;
+  min-height: 0;
+  justify-content: flex-start;
+  gap: 0;
+  padding: 2px 0;
+  background: transparent;
+  border: 0;
+  box-shadow: none;
+  border-radius: 0;
+}
+
 .bookmark-content:hover {
   border-color: var(--bookmark-hover-border);
   box-shadow: var(--bookmark-hover-shadow);
@@ -269,6 +322,11 @@ const forwardDragEnd = (event) => emit('drag-end', event)
 .bookmark-row.folder .bookmark-content {
   background: var(--folder-card-bg);
   border-color: var(--folder-card-border);
+}
+
+.bookmark-row.folder .bookmark-content.is-minimal {
+  background: transparent;
+  border-color: transparent;
 }
 
 .bookmark-thumb {
@@ -364,6 +422,25 @@ const forwardDragEnd = (event) => emit('drag-end', event)
   flex: 1;
 }
 
+.bookmark-text.is-minimal {
+  flex: initial;
+  width: 100%;
+}
+
+.bookmark-text.is-minimal a,
+.bookmark-text.is-minimal span {
+  overflow: visible;
+  display: block;
+  white-space: nowrap;
+  -webkit-line-clamp: unset;
+}
+
+.bookmark-content.is-minimal:hover {
+  border-color: transparent;
+  box-shadow: none;
+  transform: none;
+}
+
 .bookmark-text a,
 .bookmark-text span {
   display: block;
@@ -405,6 +482,13 @@ const forwardDragEnd = (event) => emit('drag-end', event)
     width: 104px;
     height: 104px;
     padding: 8px;
+  }
+
+  .bookmark-content.is-minimal {
+    width: 100%;
+    height: auto;
+    min-height: 0;
+    padding: 2px 0;
   }
 
   .bookmark-text a,

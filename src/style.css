@@ -255,7 +255,7 @@ body {
 .module-section {
   border: 0;
   border-radius: var(--radius-base);
-  background: var(--module-bg);
+  background: transparent;
   padding: 14px 14px 0 14px;
   transition:
     border-color 0.16s ease,

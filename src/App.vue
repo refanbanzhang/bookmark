@@ -39,6 +39,7 @@ const loading = ref(true)
 const status = ref('正在加载书签……')
 const warning = ref('')
 const theme = ref('light')
+const minimalMode = ref(false)
 const chromeRootFolderId = ref('1')
 const editingNode = ref(null)
 const editingTitle = ref('')
@@ -53,6 +54,7 @@ const contextMenu = ref({
 })
 
 const THEME_KEY = 'bookmark-theme'
+const MINIMAL_MODE_KEY = 'bookmark-minimal-mode'
 
 const editingKind = computed(() => {
   if (!editingNode.value) return ''
@@ -138,6 +140,15 @@ const toggleTheme = () => {
   const next = theme.value === 'dark' ? 'light' : 'dark'
   applyTheme(next)
   localStorage.setItem(THEME_KEY, next)
+}
+
+const initMinimalMode = () => {
+  minimalMode.value = localStorage.getItem(MINIMAL_MODE_KEY) === 'true'
+}
+
+const toggleMinimalMode = () => {
+  minimalMode.value = !minimalMode.value
+  localStorage.setItem(MINIMAL_MODE_KEY, String(minimalMode.value))
 }
 
 const syncStatusForMode = () => {
@@ -455,6 +466,7 @@ watch(editingNode, async (node) => {
 
 onMounted(() => {
   initTheme()
+  initMinimalMode()
   void loadBookmarks()
   window.addEventListener('resize', closeContextMenu)
   window.addEventListener('scroll', closeContextMenu, true)
@@ -473,6 +485,9 @@ onBeforeUnmount(() => {
         <h1 class="title">书签主页</h1>
       </div>
       <div class="topbar-actions">
+        <button class="theme-toggle" type="button" @click="toggleMinimalMode">
+          {{ minimalMode ? '缩略图模式' : '极简模式' }}
+        </button>
         <button class="theme-toggle" type="button" @click="toggleTheme">
           {{ theme === 'dark' ? '浅色模式' : '深色模式' }}
         </button>
@@ -491,6 +506,7 @@ onBeforeUnmount(() => {
         :nodes="bookmarkTree"
         :parent-id="null"
         :depth="0"
+        :minimal-mode="minimalMode"
         :can-move="canMoveNode"
         @drag-end="handleDragEnd"
         @open-bookmark="openBookmarkUrl"
