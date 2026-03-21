@@ -1,6 +1,7 @@
 <script setup>
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import BookmarkGroup from './components/BookmarkGroup.vue'
+import { fallbackTree } from './mock/fallbackTree'
 import {
   findNodeById,
   getNodeLocation,
@@ -16,29 +17,6 @@ import {
   loadBackgroundSettings,
   saveBackgroundSettings
 } from './utils/backgroundSettings'
-
-const fallbackTree = [
-  {
-    id: 'demo-bookmark-bar',
-    title: '书签栏',
-    children: [
-      { id: 'b1', title: 'Vue 官方', url: 'https://vuejs.org/' },
-      { id: 'b2', title: 'Vite 文档', url: 'https://vitejs.dev/guide/' }
-    ]
-  },
-  {
-    id: 'demo-other',
-    title: '其他书签',
-    children: [
-      { id: 'o1', title: 'Chrome 扩展文档', url: 'https://developer.chrome.com/docs/extensions/' },
-      { id: 'o2', title: 'MDN CSS', url: 'https://developer.mozilla.org/zh-CN/docs/Web/CSS' },
-      {
-        id: 'o3',
-        title: '生产力工具'
-      }
-    ]
-  }
-]
 
 const bookmarkTree = ref([])
 const loading = ref(true)
@@ -296,7 +274,7 @@ const syncStatusForMode = () => {
   }
 
   status.value = 'Chrome 书签接口暂不可用，展示演示数据。'
-  warning.value = '请在 Chrome 新标签页里打开此扩展以读取真实书签。'
+  warning.value = ''
 }
 
 const loadBookmarks = async () => {
