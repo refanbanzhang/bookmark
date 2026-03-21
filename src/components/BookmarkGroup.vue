@@ -46,6 +46,14 @@ const parentIdValue = computed(() =>
 
 const hasChildren = (node) => Array.isArray(node?.children) && node.children.length > 0
 const isRootFolder = (node) => props.depth === 0 && hasChildren(node)
+const getHost = (url) => {
+  if (!url) return ''
+  try {
+    return new URL(url).host.replace(/^www\./, '')
+  } catch {
+    return ''
+  }
+}
 
 const loadThumb = async (node) => {
   if (props.minimalMode || !node?.url) return
@@ -189,7 +197,7 @@ const forwardDragEnd = (event) => emit('drag-end', event)
             </a>
             <a
               v-else-if="node.url"
-              class="bookmark-thumb-link bookmark-thumb thumb-placeholder"
+              class="bookmark-thumb-link bookmark-thumb-wrap thumb-placeholder"
               :href="node.url"
               target="_blank"
               rel="noreferrer"
@@ -205,6 +213,7 @@ const forwardDragEnd = (event) => emit('drag-end', event)
             <a v-if="node.url" :href="node.url" target="_blank" rel="noreferrer" draggable="false" @click.stop>
               {{ node.title || '未命名书签' }}
             </a>
+            <span v-if="node.url && !minimalMode" class="bookmark-host">{{ getHost(node.url) }}</span>
             <span v-else>{{ node.title || '未命名目录' }}</span>
           </div>
         </div>
@@ -228,7 +237,8 @@ const forwardDragEnd = (event) => emit('drag-end', event)
 
 <style scoped>
 .bookmark-group {
-  --bookmark-thumb-height: 70px;
+  --bookmark-thumb-size: 42px;
+  --bookmark-card-width: 180px;
   list-style: none;
   margin: 0;
   padding: 0;
@@ -236,7 +246,8 @@ const forwardDragEnd = (event) => emit('drag-end', event)
   display: flex;
   flex-wrap: wrap;
   align-items: flex-start;
-  gap: 8px;
+  row-gap: 8px;
+  column-gap: 10px;
 }
 
 .bookmark-group.is-minimal {
@@ -272,6 +283,10 @@ const forwardDragEnd = (event) => emit('drag-end', event)
   width: 100%;
 }
 
+.bookmark-item:not(.is-root-folder) {
+  flex: 0 0 auto;
+}
+
 .bookmark-row {
   position: relative;
 }
@@ -279,15 +294,15 @@ const forwardDragEnd = (event) => emit('drag-end', event)
 .bookmark-content {
   display: flex;
   flex-direction: column;
-  justify-content: center;
+  justify-content: flex-start;
   align-items: flex-start;
   gap: 8px;
   background: var(--bookmark-card-bg);
   border: 1px solid var(--bookmark-card-border);
   border-radius: var(--radius-base);
-  width: 124px;
-  height: 124px;
-  padding: 10px;
+  width: var(--bookmark-card-width);
+  flex-shrink: 0;
+  padding: 12px;
   box-shadow: var(--bookmark-card-shadow);
   transition:
     border-color 0.16s ease,
@@ -316,7 +331,7 @@ const forwardDragEnd = (event) => emit('drag-end', event)
 .bookmark-content:hover {
   border-color: var(--bookmark-hover-border);
   box-shadow: var(--bookmark-hover-shadow);
-  transform: translateY(-2px);
+  transform: translateY(-1px);
 }
 
 .bookmark-row.folder .bookmark-content {
@@ -337,6 +352,7 @@ const forwardDragEnd = (event) => emit('drag-end', event)
   max-height: 100%;
   margin: 0;
   object-fit: contain;
+  aspect-ratio: 1 / 1;
   object-position: center;
   position: relative;
   z-index: 1;
@@ -348,17 +364,17 @@ const forwardDragEnd = (event) => emit('drag-end', event)
 }
 
 .bookmark-thumb-wrap {
-  width: 100%;
-  height: var(--bookmark-thumb-height);
+  width: var(--bookmark-thumb-size);
+  height: var(--bookmark-thumb-size);
   display: flex;
   align-items: center;
   justify-content: center;
-  padding: 6px;
-  border: 1px solid var(--thumb-border);
+  padding: 8px;
+  border: 0;
   box-shadow:
     0 1px 2px rgba(15, 23, 42, 0.06),
     var(--thumb-inset);
-  border-radius: var(--radius-base);
+  border-radius: 10px;
   position: relative;
   overflow: hidden;
   background: var(--thumb-surface);
@@ -389,7 +405,7 @@ const forwardDragEnd = (event) => emit('drag-end', event)
   align-items: center;
   justify-content: center;
   padding: 0;
-  border: 1px solid var(--thumb-border);
+  border: 0;
   box-shadow:
     0 1px 2px rgba(15, 23, 42, 0.06),
     var(--thumb-inset);
@@ -405,7 +421,7 @@ const forwardDragEnd = (event) => emit('drag-end', event)
   align-items: center;
   justify-content: center;
   padding: 0;
-  border: 1px solid var(--thumb-border);
+  border: 0;
   box-shadow:
     0 1px 2px rgba(15, 23, 42, 0.06),
     var(--thumb-inset);
@@ -419,7 +435,6 @@ const forwardDragEnd = (event) => emit('drag-end', event)
 .bookmark-text {
   min-width: 0;
   width: 100%;
-  flex: 1;
 }
 
 .bookmark-text.is-minimal {
@@ -441,11 +456,11 @@ const forwardDragEnd = (event) => emit('drag-end', event)
   transform: none;
 }
 
-.bookmark-text a,
-.bookmark-text span {
+.bookmark-text > a,
+.bookmark-text > span:not(.bookmark-host) {
   display: block;
   font-weight: 600;
-  font-size: 13px;
+  font-size: 15px;
   line-height: 1.2;
   color: var(--bookmark-text);
   text-decoration: none;
@@ -453,7 +468,23 @@ const forwardDragEnd = (event) => emit('drag-end', event)
   overflow: hidden;
   display: -webkit-box;
   -webkit-box-orient: vertical;
-  -webkit-line-clamp: 2;
+  -webkit-line-clamp: 1;
+}
+
+.bookmark-text > a + span {
+  margin-top: 2px;
+}
+
+.bookmark-host {
+  display: block;
+  margin-top: 2px;
+  font-size: 11px;
+  line-height: 1.2;
+  font-weight: 400;
+  color: color-mix(in srgb, var(--muted) 72%, transparent);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .bookmark-text a:hover {
@@ -478,10 +509,12 @@ const forwardDragEnd = (event) => emit('drag-end', event)
 }
 
 @media (max-width: 768px) {
+  .bookmark-group {
+    --bookmark-card-width: 160px;
+  }
+
   .bookmark-content {
-    width: 104px;
-    height: 104px;
-    padding: 8px;
+    padding: 10px;
   }
 
   .bookmark-content.is-minimal {
@@ -491,8 +524,8 @@ const forwardDragEnd = (event) => emit('drag-end', event)
     padding: 2px 0;
   }
 
-  .bookmark-text a,
-  .bookmark-text span {
+  .bookmark-text > a,
+  .bookmark-text > span:not(.bookmark-host) {
     font-size: 12px;
   }
 }

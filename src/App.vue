@@ -22,6 +22,7 @@ const bookmarkTree = ref([])
 const loading = ref(true)
 const status = ref('正在加载书签……')
 const warning = ref('')
+const activeTab = ref('all')
 const theme = ref('light')
 const minimalMode = ref(false)
 const backgroundSettings = ref(createDefaultBackgroundSettings())
@@ -64,6 +65,26 @@ const contextMenuStyle = computed(() => ({
 const hasBackgroundImage = computed(
   () => backgroundSettings.value.enabled && Boolean(backgroundSettings.value.imageUrl)
 )
+const tabOptions = computed(() => {
+  const folders = bookmarkTree.value.filter((node) => hasChildren(node))
+  return [
+    { id: 'all', label: '全部' },
+    ...folders.map((folder) => ({
+      id: String(folder.id),
+      label: folder.title || '未命名目录'
+    }))
+  ]
+})
+const visibleNodes = computed(() => {
+  if (activeTab.value === 'all') {
+    return bookmarkTree.value
+  }
+  const target = bookmarkTree.value.find((node) => String(node.id) === activeTab.value)
+  if (!target || !hasChildren(target)) {
+    return bookmarkTree.value
+  }
+  return target.children
+})
 
 const pageBackdropStyle = computed(() => {
   if (!hasBackgroundImage.value) {
@@ -275,6 +296,10 @@ const syncStatusForMode = () => {
 
   status.value = 'Chrome 书签接口暂不可用，展示演示数据。'
   warning.value = ''
+}
+
+const switchTab = (tabId) => {
+  activeTab.value = tabId
 }
 
 const loadBookmarks = async () => {
@@ -579,6 +604,13 @@ watch(editingNode, async (node) => {
   editInput.value?.select?.()
 })
 
+watch(tabOptions, (tabs) => {
+  const exists = tabs.some((tab) => tab.id === activeTab.value)
+  if (!exists) {
+    activeTab.value = 'all'
+  }
+})
+
 onMounted(() => {
   initTheme()
   initMinimalMode()
@@ -600,18 +632,29 @@ onBeforeUnmount(() => {
 
     <div class="content" :class="{ 'content-with-background': hasBackgroundImage }" :style="contentStyle">
       <header class="topbar">
-        <div class="topbar-brand">
-          <h1 class="title">书签主页</h1>
-        </div>
+        <nav class="tabs" aria-label="书签分类">
+          <button
+            v-for="tab in tabOptions"
+            :key="tab.id"
+            class="tab-btn"
+            :class="{ 'tab-btn-active': activeTab === tab.id }"
+            type="button"
+            @click="switchTab(tab.id)"
+          >
+            {{ tab.label }}
+          </button>
+        </nav>
         <div class="topbar-actions">
-          <button class="theme-toggle" type="button" @click="openBackgroundSettings">
-            {{ hasBackgroundImage ? '更换背景图' : '设置背景图' }}
-          </button>
-          <button class="theme-toggle" type="button" @click="toggleMinimalMode">
-            {{ minimalMode ? '缩略图模式' : '极简模式' }}
-          </button>
-          <button class="theme-toggle" type="button" @click="toggleTheme">
-            {{ theme === 'dark' ? '浅色模式' : '深色模式' }}
+          <button
+            class="theme-switch"
+            type="button"
+            :aria-label="theme === 'dark' ? '切换为浅色' : '切换为夜间'"
+            title="切换外观"
+            @click="toggleTheme"
+          >
+            <span class="material-symbols-outlined theme-switch-icon" aria-hidden="true">{{
+              theme === 'dark' ? 'dark_mode' : 'light_mode'
+            }}</span>
           </button>
         </div>
       </header>
@@ -623,9 +666,9 @@ onBeforeUnmount(() => {
 
       <p v-if="warning" class="warning">{{ warning }}</p>
 
-      <div v-if="!loading && bookmarkTree.length" class="modules">
+      <div v-if="!loading && visibleNodes.length" class="modules">
         <BookmarkGroup
-          :nodes="bookmarkTree"
+          :nodes="visibleNodes"
           :parent-id="null"
           :depth="0"
           :minimal-mode="minimalMode"
