@@ -1,5 +1,6 @@
 <script setup>
-import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
+import { gsap } from 'gsap'
 import BookmarkGroup from './components/BookmarkGroup.vue'
 import { fallbackTree } from './mock/fallbackTree'
 import {
@@ -8,8 +9,7 @@ import {
   hasChildren,
   moveNodeToFinalIndexInTree,
   pruneNodesByIds,
-  renameNodeInTree,
-  replaceNodesAtParent
+  renameNodeInTree
 } from './utils/bookmarkTree'
 import {
   clearBackgroundSettings,
@@ -22,9 +22,17 @@ const bookmarkTree = ref([])
 const loading = ref(true)
 const status = ref('正在加载书签……')
 const warning = ref('')
-const activeTab = ref('all')
+const activeTab = ref('')
 const theme = ref('light')
 const minimalMode = ref(false)
+const pageShellRef = ref(null)
+const pageBackdropRef = ref(null)
+const contentRef = ref(null)
+const topbarRef = ref(null)
+const tabsRef = ref(null)
+const modulesRef = ref(null)
+const themeSwitchRef = ref(null)
+const themeSwitchIconRef = ref(null)
 const backgroundSettings = ref(createDefaultBackgroundSettings())
 const backgroundDraft = ref(createDefaultBackgroundSettings())
 const backgroundSettingsOpen = ref(false)
@@ -45,6 +53,15 @@ const contextMenu = ref({
 
 const THEME_KEY = 'bookmark-theme'
 const MINIMAL_MODE_KEY = 'bookmark-minimal-mode'
+const MAX_ANIMATED_BOOKMARKS = 24
+
+let pageIntroTimeline = null
+let bookmarksTimeline = null
+let themeToggleTimeline = null
+let motionMatcher = null
+let canAnimate = true
+let bookmarkAnimationQueued = false
+let isDragUpdating = false
 
 const editingKind = computed(() => {
   if (!editingNode.value) return ''
@@ -67,19 +84,27 @@ const hasBackgroundImage = computed(
 )
 const tabOptions = computed(() => {
   const folders = bookmarkTree.value.filter((node) => hasChildren(node))
-  return [
-    { id: 'all', label: '全部' },
-    ...folders.map((folder) => ({
-      id: String(folder.id),
-      label: folder.title || '未命名目录'
-    }))
-  ]
+  return folders.map((folder) => ({
+    id: String(folder.id),
+    label: folder.title || '未命名目录'
+  }))
+})
+const visibleParentId = computed(() => {
+  if (!tabOptions.value.length) {
+    return null
+  }
+
+  const targetTabId = activeTab.value || tabOptions.value[0].id
+  const target = bookmarkTree.value.find((node) => String(node.id) === targetTabId)
+  return target && hasChildren(target) ? String(target.id) : null
 })
 const visibleNodes = computed(() => {
-  if (activeTab.value === 'all') {
+  if (!tabOptions.value.length) {
     return bookmarkTree.value
   }
-  const target = bookmarkTree.value.find((node) => String(node.id) === activeTab.value)
+  const target = visibleParentId.value
+    ? bookmarkTree.value.find((node) => String(node.id) === visibleParentId.value)
+    : null
   if (!target || !hasChildren(target)) {
     return bookmarkTree.value
   }
@@ -190,9 +215,118 @@ const initTheme = () => {
   applyTheme(preferDark ? 'dark' : 'light')
 }
 
+const getThemeTransitionTargets = () => {
+  return [hasBackgroundImage.value ? pageBackdropRef.value : null, contentRef.value].filter(Boolean)
+}
+
+const clearThemeTransitionState = () => {
+  themeToggleTimeline?.kill()
+  themeToggleTimeline = null
+  clearAnimationTargets(getThemeTransitionTargets())
+  clearAnimationTargets([themeSwitchRef.value, themeSwitchIconRef.value].filter(Boolean))
+}
+
+const animateThemeToggle = (nextTheme) => {
+  if (!canAnimate) {
+    applyTheme(nextTheme)
+    return
+  }
+
+  const panelTargets = getThemeTransitionTargets()
+  const switchButton = themeSwitchRef.value
+  const switchIcon = themeSwitchIconRef.value
+
+  clearThemeTransitionState()
+
+  if (!panelTargets.length || !switchButton || !switchIcon) {
+    applyTheme(nextTheme)
+    return
+  }
+
+  themeToggleTimeline = gsap.timeline({
+    defaults: {
+      ease: 'power2.out'
+    }
+  })
+
+  themeToggleTimeline
+    .to(
+      panelTargets,
+      {
+        autoAlpha: 0.88,
+        y: 4,
+        duration: 0.16,
+        stagger: 0.01
+      },
+      0
+    )
+    .to(
+      switchButton,
+      {
+        scale: 0.94,
+        duration: 0.16
+      },
+      0
+    )
+    .to(
+      switchIcon,
+      {
+        rotation: nextTheme === 'dark' ? 140 : -140,
+        scale: 0.72,
+        duration: 0.18
+      },
+      0
+    )
+    .add(() => {
+      applyTheme(nextTheme)
+      gsap.set(switchButton, {
+        clearProps: 'backgroundColor,borderColor,color'
+      })
+      rememberHoverBase(switchButton)
+      if (switchButton.matches(':hover')) {
+        gsap.set(switchButton, {
+          color: getRootCssVar('--theme-switch-fg-hover'),
+          backgroundColor: getRootCssVar('--theme-switch-bg-hover')
+        })
+      }
+    })
+    .to(
+      panelTargets,
+      {
+        autoAlpha: 1,
+        y: 0,
+        duration: 0.3,
+        stagger: 0.015,
+        ease: 'power3.out',
+        clearProps: 'transform,opacity,visibility'
+      }
+    )
+    .to(
+      switchButton,
+      {
+        scale: 1,
+        duration: 0.28,
+        ease: 'back.out(1.7)',
+        clearProps: 'transform'
+      },
+      '<'
+    )
+    .to(
+      switchIcon,
+      {
+        rotation: 0,
+        scale: 1,
+        duration: 0.32,
+        ease: 'back.out(1.8)',
+        clearProps: 'transform'
+      },
+      '<'
+    )
+}
+
 const toggleTheme = () => {
   const next = theme.value === 'dark' ? 'light' : 'dark'
-  applyTheme(next)
+  animateThemeToggle(next)
   localStorage.setItem(THEME_KEY, next)
 }
 
@@ -209,11 +343,438 @@ const initBackgroundSettings = () => {
   backgroundSettings.value = loadBackgroundSettings()
 }
 
+const getRootCssVar = (name) => getComputedStyle(document.documentElement).getPropertyValue(name).trim()
+
+const omitMotionProps = (vars) => {
+  const nextVars = { ...vars }
+  delete nextVars.x
+  delete nextVars.y
+  delete nextVars.scale
+  return nextVars
+}
+
+const rememberHoverBase = (element) => {
+  if (!element) {
+    return null
+  }
+
+  const styles = window.getComputedStyle(element)
+  const base = {
+    backgroundColor: styles.backgroundColor,
+    borderColor: styles.borderColor,
+    color: styles.color,
+    boxShadow: styles.boxShadow === 'none' ? '0 0 0 rgba(0, 0, 0, 0)' : styles.boxShadow
+  }
+
+  element.__gsapHoverBase = base
+  return base
+}
+
+const animateHoverSurface = (element, vars) => {
+  if (!element) {
+    return
+  }
+
+  gsap.killTweensOf(element)
+
+  if (!canAnimate) {
+    gsap.set(element, omitMotionProps(vars))
+    return
+  }
+
+  gsap.to(element, {
+    duration: 0.2,
+    ease: 'power2.out',
+    overwrite: 'auto',
+    ...vars
+  })
+}
+
+const resetHoverSurface = (element) => {
+  if (!element) {
+    return
+  }
+
+  const base = element.__gsapHoverBase || rememberHoverBase(element)
+  animateHoverSurface(element, {
+    y: 0,
+    scale: 1,
+    backgroundColor: base?.backgroundColor,
+    borderColor: base?.borderColor,
+    color: base?.color,
+    boxShadow: base?.boxShadow
+  })
+}
+
+const getTabBaseVars = (element) => ({
+  backgroundColor: element?.classList.contains('tab-btn-active') ? getRootCssVar('--tab-active-bg') : 'transparent',
+  boxShadow: element?.classList.contains('tab-btn-active') ? getRootCssVar('--tab-active-shadow') : '0 0 0 rgba(0, 0, 0, 0)',
+  color: element?.classList.contains('tab-btn-active') ? getRootCssVar('--topbar-title') : getRootCssVar('--muted')
+})
+
+const syncTabButtonStates = () => {
+  const buttons = tabsRef.value ? Array.from(tabsRef.value.querySelectorAll('.tab-btn')) : []
+  if (!buttons.length) {
+    return
+  }
+
+  for (const button of buttons) {
+    const base = getTabBaseVars(button)
+    const isHovered = button.matches(':hover')
+
+    gsap.killTweensOf(button)
+    gsap.set(button, {
+      y: isHovered && canAnimate ? -1 : 0,
+      scale: isHovered && canAnimate ? 1.01 : 1,
+      backgroundColor: base.backgroundColor,
+      boxShadow: base.boxShadow,
+      color: isHovered && !button.classList.contains('tab-btn-active') ? getRootCssVar('--text') : base.color
+    })
+  }
+}
+
+const onTabHoverEnter = (event) => {
+  const element = event.currentTarget
+  if (!element) {
+    return
+  }
+
+  animateHoverSurface(element, {
+    y: -1,
+    scale: 1.01,
+    color: element.classList.contains('tab-btn-active') ? getRootCssVar('--topbar-title') : getRootCssVar('--text')
+  })
+}
+
+const onTabHoverLeave = (event) => {
+  const element = event.currentTarget
+  if (!element) {
+    return
+  }
+
+  const base = getTabBaseVars(element)
+  animateHoverSurface(element, {
+    y: 0,
+    scale: 1,
+    backgroundColor: base.backgroundColor,
+    boxShadow: base.boxShadow,
+    color: base.color
+  })
+}
+
+const onThemeSwitchHoverEnter = (event) => {
+  const element = event.currentTarget
+  if (!element) {
+    return
+  }
+
+  rememberHoverBase(element)
+  animateHoverSurface(element, {
+    y: -1,
+    scale: 1.03,
+    color: getRootCssVar('--theme-switch-fg-hover'),
+    backgroundColor: getRootCssVar('--theme-switch-bg-hover')
+  })
+}
+
+const onThemeSwitchHoverLeave = (event) => {
+  resetHoverSurface(event.currentTarget)
+}
+
+const onModalCloseHoverEnter = (event) => {
+  const element = event.currentTarget
+  if (!element) {
+    return
+  }
+
+  rememberHoverBase(element)
+  animateHoverSurface(element, {
+    y: -1,
+    scale: 1.03,
+    color: getRootCssVar('--text'),
+    backgroundColor: getRootCssVar('--action-hover-bg')
+  })
+}
+
+const onModalCloseHoverLeave = (event) => {
+  resetHoverSurface(event.currentTarget)
+}
+
+const onContextMenuItemHoverEnter = (event) => {
+  const element = event.currentTarget
+  if (!element) {
+    return
+  }
+
+  rememberHoverBase(element)
+  animateHoverSurface(element, {
+    x: 2,
+    backgroundColor: element.classList.contains('context-menu-item-danger')
+      ? getRootCssVar('--action-danger-hover-bg')
+      : getRootCssVar('--action-hover-bg')
+  })
+}
+
+const onContextMenuItemHoverLeave = (event) => {
+  const element = event.currentTarget
+  if (!element) {
+    return
+  }
+
+  const base = element.__gsapHoverBase || rememberHoverBase(element)
+  animateHoverSurface(element, {
+    x: 0,
+    backgroundColor: base?.backgroundColor,
+    borderColor: base?.borderColor,
+    color: base?.color,
+    boxShadow: base?.boxShadow
+  })
+}
+
+const clearAnimationTargets = (targets) => {
+  if (!targets.length) {
+    return
+  }
+
+  gsap.set(targets, {
+    clearProps: 'transform,opacity,visibility'
+  })
+}
+
+const getIntroTargets = () => {
+  const tabButtons = tabsRef.value ? Array.from(tabsRef.value.querySelectorAll('.tab-btn')) : []
+  const infoBlocks = contentRef.value
+    ? Array.from(contentRef.value.querySelectorAll('.status, .warning, .empty'))
+    : []
+
+  return {
+    topbar: topbarRef.value,
+    tabButtons,
+    infoBlocks
+  }
+}
+
+const getVisibleBookmarkTargets = () => {
+  if (!modulesRef.value) {
+    return []
+  }
+
+  return Array.from(modulesRef.value.querySelectorAll('.module-section, .bookmark-row'))
+}
+
+const resetBookmarkAnimationState = () => {
+  bookmarksTimeline?.kill()
+  bookmarksTimeline = null
+  clearAnimationTargets(getVisibleBookmarkTargets())
+}
+
+const resetIntroAnimationState = () => {
+  pageIntroTimeline?.kill()
+  pageIntroTimeline = null
+
+  const { topbar, tabButtons, infoBlocks } = getIntroTargets()
+  clearAnimationTargets([topbar, ...tabButtons, ...infoBlocks].filter(Boolean))
+}
+
+const animateVisibleBookmarks = () => {
+  const targets = getVisibleBookmarkTargets()
+
+  resetBookmarkAnimationState()
+
+  if (!targets.length) {
+    return
+  }
+
+  if (!canAnimate) {
+    clearAnimationTargets(targets)
+    return
+  }
+
+  const animatedTargets = targets.slice(0, MAX_ANIMATED_BOOKMARKS)
+  const remainingTargets = targets.slice(MAX_ANIMATED_BOOKMARKS)
+
+  clearAnimationTargets(remainingTargets)
+
+  gsap.set(animatedTargets, {
+    autoAlpha: 0,
+    y: 22,
+    scale: 0.985,
+    transformOrigin: '50% 0%',
+    force3D: true
+  })
+
+  bookmarksTimeline = gsap.timeline({
+    defaults: {
+      duration: 0.5,
+      ease: 'power3.out'
+    }
+  })
+
+  bookmarksTimeline.to(animatedTargets, {
+    autoAlpha: 1,
+    y: 0,
+    scale: 1,
+    stagger: 0.04,
+    clearProps: 'transform,opacity,visibility'
+  })
+}
+
+const queueBookmarkAnimation = () => {
+  if (loading.value || bookmarkAnimationQueued) {
+    return
+  }
+
+  bookmarkAnimationQueued = true
+  nextTick(() => {
+    bookmarkAnimationQueued = false
+    animateVisibleBookmarks()
+  })
+}
+
+const playPageIntro = () => {
+  resetIntroAnimationState()
+
+  const { topbar, tabButtons, infoBlocks } = getIntroTargets()
+
+  if (!topbar) {
+    return
+  }
+
+  if (!canAnimate) {
+    clearAnimationTargets([topbar, ...tabButtons, ...infoBlocks].filter(Boolean))
+    queueBookmarkAnimation()
+    return
+  }
+
+  gsap.set(topbar, {
+    autoAlpha: 0,
+    y: -20,
+    force3D: true
+  })
+
+  if (tabButtons.length) {
+    gsap.set(tabButtons, {
+      autoAlpha: 0,
+      y: -10,
+      force3D: true
+    })
+  }
+
+  if (infoBlocks.length) {
+    gsap.set(infoBlocks, {
+      autoAlpha: 0,
+      y: 12,
+      force3D: true
+    })
+  }
+
+  pageIntroTimeline = gsap.timeline({
+    defaults: {
+      duration: 0.55,
+      ease: 'power3.out'
+    }
+  })
+
+  pageIntroTimeline.to(topbar, {
+    autoAlpha: 1,
+    y: 0,
+    clearProps: 'transform,opacity,visibility'
+  })
+
+  if (tabButtons.length) {
+    pageIntroTimeline.to(
+      tabButtons,
+      {
+        autoAlpha: 1,
+        y: 0,
+        duration: 0.36,
+        stagger: 0.04,
+        clearProps: 'transform,opacity,visibility'
+      },
+      '<0.08'
+    )
+  }
+
+  if (infoBlocks.length) {
+    pageIntroTimeline.to(
+      infoBlocks,
+      {
+        autoAlpha: 1,
+        y: 0,
+        duration: 0.38,
+        stagger: 0.06,
+        clearProps: 'transform,opacity,visibility'
+      },
+      '-=0.2'
+    )
+  }
+
+  pageIntroTimeline.add(queueBookmarkAnimation, '-=0.14')
+}
+
+const animateLatestModal = () => {
+  const cards = pageShellRef.value ? Array.from(pageShellRef.value.querySelectorAll('.modal-card')) : []
+  const latestCard = cards.at(-1)
+
+  if (!latestCard || !canAnimate) {
+    return
+  }
+
+  gsap.killTweensOf(latestCard)
+  gsap.fromTo(
+    latestCard,
+    {
+      autoAlpha: 0,
+      y: 18,
+      scale: 0.98,
+      transformOrigin: '50% 0%',
+      force3D: true
+    },
+    {
+      autoAlpha: 1,
+      y: 0,
+      scale: 1,
+      duration: 0.28,
+      ease: 'power3.out',
+      clearProps: 'transform,opacity,visibility'
+    }
+  )
+}
+
+const animateContextMenu = () => {
+  const menu = pageShellRef.value?.querySelector('.context-menu')
+
+  if (!menu || !canAnimate) {
+    return
+  }
+
+  gsap.killTweensOf(menu)
+  gsap.fromTo(
+    menu,
+    {
+      autoAlpha: 0,
+      y: -8,
+      scale: 0.96,
+      transformOrigin: 'top left',
+      force3D: true
+    },
+    {
+      autoAlpha: 1,
+      y: 0,
+      scale: 1,
+      duration: 0.2,
+      ease: 'power2.out',
+      clearProps: 'transform,opacity,visibility'
+    }
+  )
+}
+
 const openBackgroundSettings = () => {
   closeContextMenu()
   backgroundDraft.value = { ...backgroundSettings.value }
   backgroundError.value = ''
   backgroundSettingsOpen.value = true
+  nextTick(animateLatestModal)
 }
 
 const closeBackgroundSettings = () => {
@@ -385,6 +946,7 @@ const openDeleteConfirm = (node) => {
   if (!node) return
   closeContextMenu()
   deletingNode.value = node
+  nextTick(animateLatestModal)
 }
 
 const closeDeleteConfirm = () => {
@@ -406,6 +968,7 @@ const openEdit = (node) => {
   editingNode.value = node
   editingTitle.value = node?.title || ''
   editError.value = ''
+  nextTick(animateLatestModal)
 }
 
 const closeEdit = () => {
@@ -512,10 +1075,6 @@ const canMoveNode = (draggedId, targetParentId) => {
   return !nodeContainsId(sourceNode, targetParentId)
 }
 
-const handleReplaceNodes = ({ parentId, nodes }) => {
-  bookmarkTree.value = replaceNodesAtParent(bookmarkTree.value, parentId, nodes)
-}
-
 const handleDragEnd = async (event) => {
   closeContextMenu()
 
@@ -538,30 +1097,35 @@ const handleDragEnd = async (event) => {
     return
   }
 
-  bookmarkTree.value = moveNodeToFinalIndexInTree(bookmarkTree.value, targetId, targetParentId, nextIndex)
-  await nextTick()
-
+  isDragUpdating = true
   try {
-    if (hasChromeBookmarks()) {
-      const ops = getChromeNodeOps()
-      const chromeMoveIndex = getChromeMoveIndex(event)
-      if (!Number.isInteger(chromeMoveIndex) || chromeMoveIndex < 0) {
-        return
+    bookmarkTree.value = moveNodeToFinalIndexInTree(bookmarkTree.value, targetId, targetParentId, nextIndex)
+    await nextTick()
+
+    try {
+      if (hasChromeBookmarks()) {
+        const ops = getChromeNodeOps()
+        const chromeMoveIndex = getChromeMoveIndex(event)
+        if (!Number.isInteger(chromeMoveIndex) || chromeMoveIndex < 0) {
+          return
+        }
+        await ops.move(targetId, {
+          parentId: getChromeMoveParentId(targetParentId, chromeRootFolderId.value),
+          index: chromeMoveIndex
+        })
+        await loadBookmarks()
       }
-      await ops.move(targetId, {
-        parentId: getChromeMoveParentId(targetParentId, chromeRootFolderId.value),
-        index: chromeMoveIndex
-      })
+
+      status.value = '已更新书签顺序。'
+      warning.value = hasChromeBookmarks() ? '' : '当前为演示数据，拖拽排序仅在页面内生效。'
+    } catch (error) {
+      console.error('drag sync failed', error)
+      status.value = '同步拖拽结果失败。'
+      warning.value = error instanceof Error ? error.message : '请检查 Chrome 书签权限。'
       await loadBookmarks()
     }
-
-    status.value = '已更新书签顺序。'
-    warning.value = hasChromeBookmarks() ? '' : '当前为演示数据，拖拽排序仅在页面内生效。'
-  } catch (error) {
-    console.error('drag sync failed', error)
-    status.value = '同步拖拽结果失败。'
-    warning.value = error instanceof Error ? error.message : '请检查 Chrome 书签权限。'
-    await loadBookmarks()
+  } finally {
+    isDragUpdating = false
   }
 }
 
@@ -575,6 +1139,7 @@ const openContextMenu = (node, point) => {
   const x = clamp(point.x, 8, window.innerWidth - menuWidth - 8)
   const y = clamp(point.y, 8, window.innerHeight - menuHeight - 8)
   contextMenu.value = { visible: true, x, y, node }
+  nextTick(animateContextMenu)
 }
 
 const closeContextMenu = () => {
@@ -605,10 +1170,46 @@ watch(editingNode, async (node) => {
 })
 
 watch(tabOptions, (tabs) => {
+  if (!tabs.length) {
+    activeTab.value = ''
+    return
+  }
   const exists = tabs.some((tab) => tab.id === activeTab.value)
   if (!exists) {
-    activeTab.value = 'all'
+    activeTab.value = tabs[0].id
   }
+})
+
+watch(activeTab, (nextTab, previousTab) => {
+  if (!nextTab || !previousTab || nextTab === previousTab || loading.value || isDragUpdating) {
+    return
+  }
+
+  nextTick(syncTabButtonStates)
+  queueBookmarkAnimation()
+})
+
+watch(theme, () => {
+  nextTick(syncTabButtonStates)
+})
+
+watch(
+  () => visibleNodes.value,
+  (nextNodes, previousNodes) => {
+    if (!previousNodes || nextNodes === previousNodes || loading.value || isDragUpdating) {
+      return
+    }
+
+    queueBookmarkAnimation()
+  }
+)
+
+watch(loading, (isLoading, wasLoading) => {
+  if (!wasLoading || isLoading || isDragUpdating) {
+    return
+  }
+
+  nextTick(playPageIntro)
 })
 
 onMounted(() => {
@@ -616,23 +1217,59 @@ onMounted(() => {
   initMinimalMode()
   initBackgroundSettings()
   void loadBookmarks()
+
+  motionMatcher = gsap.matchMedia()
+  motionMatcher.add(
+    {
+      reduceMotion: '(prefers-reduced-motion: reduce)',
+      allowMotion: '(prefers-reduced-motion: no-preference)'
+    },
+    (context) => {
+      canAnimate = !context.conditions.reduceMotion
+
+      if (!canAnimate) {
+        resetIntroAnimationState()
+        resetBookmarkAnimationState()
+        return
+      }
+
+      if (!loading.value) {
+        nextTick(syncTabButtonStates)
+        playPageIntro()
+      }
+    }
+  )
+
   window.addEventListener('resize', closeContextMenu)
   window.addEventListener('scroll', closeContextMenu, true)
 })
 
-onBeforeUnmount(() => {
+onUnmounted(() => {
+  motionMatcher?.revert()
+  pageIntroTimeline?.kill()
+  bookmarksTimeline?.kill()
+  themeToggleTimeline?.kill()
+  const hoverTargets = pageShellRef.value?.querySelectorAll?.('.tab-btn, .theme-switch, .modal-close, .context-menu-item')
+  if (hoverTargets?.length) {
+    gsap.killTweensOf(Array.from(hoverTargets))
+  }
   window.removeEventListener('resize', closeContextMenu)
   window.removeEventListener('scroll', closeContextMenu, true)
 })
 </script>
 
 <template>
-  <main class="page-shell" @click="closeContextMenu">
-    <div class="page-backdrop" :class="{ 'is-active': hasBackgroundImage }" :style="pageBackdropStyle"></div>
+  <main ref="pageShellRef" class="page-shell" @click="closeContextMenu">
+    <div
+      ref="pageBackdropRef"
+      class="page-backdrop"
+      :class="{ 'is-active': hasBackgroundImage }"
+      :style="pageBackdropStyle"
+    ></div>
 
-    <div class="content" :class="{ 'content-with-background': hasBackgroundImage }" :style="contentStyle">
-      <header class="topbar">
-        <nav class="tabs" aria-label="书签分类">
+    <div ref="contentRef" class="content" :class="{ 'content-with-background': hasBackgroundImage }" :style="contentStyle">
+      <header ref="topbarRef" class="topbar">
+        <nav ref="tabsRef" class="tabs" aria-label="书签分类">
           <button
             v-for="tab in tabOptions"
             :key="tab.id"
@@ -640,19 +1277,24 @@ onBeforeUnmount(() => {
             :class="{ 'tab-btn-active': activeTab === tab.id }"
             type="button"
             @click="switchTab(tab.id)"
+            @pointerenter="onTabHoverEnter"
+            @pointerleave="onTabHoverLeave"
           >
             {{ tab.label }}
           </button>
         </nav>
         <div class="topbar-actions">
           <button
+            ref="themeSwitchRef"
             class="theme-switch"
             type="button"
             :aria-label="theme === 'dark' ? '切换为浅色' : '切换为夜间'"
             title="切换外观"
             @click="toggleTheme"
+            @pointerenter="onThemeSwitchHoverEnter"
+            @pointerleave="onThemeSwitchHoverLeave"
           >
-            <span class="material-symbols-outlined theme-switch-icon" aria-hidden="true">{{
+            <span ref="themeSwitchIconRef" class="material-symbols-outlined theme-switch-icon" aria-hidden="true">{{
               theme === 'dark' ? 'dark_mode' : 'light_mode'
             }}</span>
           </button>
@@ -666,17 +1308,16 @@ onBeforeUnmount(() => {
 
       <p v-if="warning" class="warning">{{ warning }}</p>
 
-      <div v-if="!loading && visibleNodes.length" class="modules">
+      <div v-if="!loading && visibleNodes.length" ref="modulesRef" class="modules">
         <BookmarkGroup
           :nodes="visibleNodes"
-          :parent-id="null"
+          :parent-id="visibleParentId"
           :depth="0"
           :minimal-mode="minimalMode"
           :can-move="canMoveNode"
           @drag-end="handleDragEnd"
           @open-bookmark="openBookmarkUrl"
           @open-context-menu="openContextMenu"
-          @replace-nodes="handleReplaceNodes"
         />
       </div>
 
@@ -687,7 +1328,15 @@ onBeforeUnmount(() => {
       <div class="modal-card modal-card-wide" role="dialog" aria-modal="true" aria-label="配置背景图">
         <div class="modal-header">
           <h3 class="modal-title">配置背景图</h3>
-          <button class="modal-close" type="button" @click="closeBackgroundSettings">×</button>
+          <button
+            class="modal-close"
+            type="button"
+            @click="closeBackgroundSettings"
+            @pointerenter="onModalCloseHoverEnter"
+            @pointerleave="onModalCloseHoverLeave"
+          >
+            ×
+          </button>
         </div>
 
         <p class="modal-meta">支持图片地址或本地上传，保存后会持久化到本地。</p>
@@ -759,7 +1408,15 @@ onBeforeUnmount(() => {
       <div class="modal-card" role="dialog" aria-modal="true" :aria-label="`重命名${editingKind}`">
         <div class="modal-header">
           <h3 class="modal-title">重命名{{ editingKind }}</h3>
-          <button class="modal-close" type="button" @click="closeEdit">×</button>
+          <button
+            class="modal-close"
+            type="button"
+            @click="closeEdit"
+            @pointerenter="onModalCloseHoverEnter"
+            @pointerleave="onModalCloseHoverLeave"
+          >
+            ×
+          </button>
         </div>
 
         <p class="modal-meta">{{ editingNode.title || `未命名${editingKind}` }}</p>
@@ -790,7 +1447,15 @@ onBeforeUnmount(() => {
       <div class="modal-card" role="dialog" aria-modal="true" :aria-label="`删除${deletingKind}`">
         <div class="modal-header">
           <h3 class="modal-title">确认删除{{ deletingKind }}</h3>
-          <button class="modal-close" type="button" @click="closeDeleteConfirm">×</button>
+          <button
+            class="modal-close"
+            type="button"
+            @click="closeDeleteConfirm"
+            @pointerenter="onModalCloseHoverEnter"
+            @pointerleave="onModalCloseHoverLeave"
+          >
+            ×
+          </button>
         </div>
 
         <p class="modal-meta">
@@ -813,10 +1478,22 @@ onBeforeUnmount(() => {
       :style="contextMenuStyle"
       @click.stop
     >
-      <button class="context-menu-item" type="button" @click="handleContextRename">
+      <button
+        class="context-menu-item"
+        type="button"
+        @click="handleContextRename"
+        @pointerenter="onContextMenuItemHoverEnter"
+        @pointerleave="onContextMenuItemHoverLeave"
+      >
         重命名{{ contextKind }}
       </button>
-      <button class="context-menu-item context-menu-item-danger" type="button" @click="handleContextDelete">
+      <button
+        class="context-menu-item context-menu-item-danger"
+        type="button"
+        @click="handleContextDelete"
+        @pointerenter="onContextMenuItemHoverEnter"
+        @pointerleave="onContextMenuItemHoverLeave"
+      >
         删除{{ contextKind }}
       </button>
     </div>

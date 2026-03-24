@@ -1,5 +1,6 @@
 <script setup>
-import { computed, ref, watch } from 'vue'
+import { computed, onUnmounted, ref, watch } from 'vue'
+import { gsap } from 'gsap'
 import { VueDraggable } from 'vue-draggable-plus'
 import { getThumbnailForUrl } from '../utils/thumbnailCache'
 
@@ -31,12 +32,12 @@ const props = defineProps({
 const emit = defineEmits([
   'drag-end',
   'open-bookmark',
-  'open-context-menu',
-  'replace-nodes'
+  'open-context-menu'
 ])
 
 const groupRef = ref(null)
 const thumbMap = ref({})
+const isLocalDragging = ref(false)
 const depthClass = computed(() => `depth-${props.depth || 0}`)
 const parentIdValue = computed(() =>
   props.parentId === null || props.parentId === undefined || props.parentId === ''
@@ -99,20 +100,213 @@ const onMove = (event) => {
   return props.canMove(draggedId, targetParentId || null)
 }
 
-const onUpdateNodes = (nextNodes) => {
-  emit('replace-nodes', {
-    parentId: props.parentId,
-    nodes: nextNodes
+const getGlobalDragCount = () => {
+  if (typeof window === 'undefined') return 0
+  return Number(window.__bookmarkDragCount || 0)
+}
+
+const setGlobalDragCount = (nextCount) => {
+  if (typeof window === 'undefined') return
+  const safeCount = Math.max(0, Number(nextCount) || 0)
+  window.__bookmarkDragCount = safeCount
+  if (safeCount > 0) {
+    document.documentElement.dataset.bookmarkDragging = 'true'
+    return
+  }
+  delete document.documentElement.dataset.bookmarkDragging
+}
+
+const isAnyDragInProgress = () => document.documentElement.dataset.bookmarkDragging === 'true'
+
+const clearHoverAnimationTargets = () => {
+  const targets = groupRef.value?.$el?.querySelectorAll?.('.bookmark-content, .bookmark-thumb-wrap, .folder-thumb, .bookmark-text')
+  if (!targets?.length) {
+    return
+  }
+  const items = Array.from(targets)
+  gsap.killTweensOf(items)
+  gsap.set(items, {
+    clearProps: 'transform,opacity,visibility'
   })
 }
 
+const onDragStart = () => {
+  if (!isLocalDragging.value) {
+    isLocalDragging.value = true
+    setGlobalDragCount(getGlobalDragCount() + 1)
+  }
+  clearHoverAnimationTargets()
+}
+
 const onDragEnd = (event) => {
+  if (isLocalDragging.value) {
+    isLocalDragging.value = false
+    setGlobalDragCount(getGlobalDragCount() - 1)
+  }
+  clearHoverAnimationTargets()
   emit('drag-end', event)
 }
 
+const getRootCssVar = (name) => getComputedStyle(document.documentElement).getPropertyValue(name).trim()
+
+const omitMotionProps = (vars) => {
+  const nextVars = { ...vars }
+  delete nextVars.x
+  delete nextVars.y
+  delete nextVars.scale
+  return nextVars
+}
+
+const rememberHoverBase = (element) => {
+  if (!element) {
+    return null
+  }
+
+  const styles = window.getComputedStyle(element)
+  const base = {
+    borderColor: styles.borderColor,
+    boxShadow: styles.boxShadow === 'none' ? '0 0 0 rgba(0, 0, 0, 0)' : styles.boxShadow,
+    backgroundColor: styles.backgroundColor
+  }
+
+  element.__gsapHoverBase = base
+  return base
+}
+
+const onBookmarkHoverEnter = (event) => {
+  const element = event.currentTarget
+  if (!element || element.classList.contains('is-minimal') || isAnyDragInProgress()) {
+    return
+  }
+
+  const thumb = element.querySelector('.bookmark-thumb-wrap, .folder-thumb')
+  const text = element.querySelector('.bookmark-text')
+
+  rememberHoverBase(element)
+
+  gsap.killTweensOf([element, thumb, text].filter(Boolean))
+
+  const elementHoverVars = {
+    y: -3,
+    boxShadow: getRootCssVar('--bookmark-hover-shadow'),
+    duration: 0.22,
+    ease: 'power2.out',
+    overwrite: 'auto'
+  }
+
+  if (thumb) {
+    const thumbHoverVars = {
+      scale: 1.04,
+      duration: 0.22,
+      ease: 'power2.out',
+      overwrite: 'auto'
+    }
+
+    if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
+      gsap.set(thumb, omitMotionProps(thumbHoverVars))
+    } else {
+      gsap.to(thumb, thumbHoverVars)
+    }
+  }
+
+  if (text) {
+    const textHoverVars = {
+      x: 2,
+      duration: 0.22,
+      ease: 'power2.out',
+      overwrite: 'auto'
+    }
+
+    if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
+      gsap.set(text, omitMotionProps(textHoverVars))
+    } else {
+      gsap.to(text, textHoverVars)
+    }
+  }
+
+  if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
+    gsap.set(element, omitMotionProps(elementHoverVars))
+    return
+  }
+
+  gsap.to(element, elementHoverVars)
+}
+
+const onBookmarkHoverLeave = (event) => {
+  const element = event.currentTarget
+  if (!element || element.classList.contains('is-minimal') || isAnyDragInProgress()) {
+    return
+  }
+
+  const thumb = element.querySelector('.bookmark-thumb-wrap, .folder-thumb')
+  const text = element.querySelector('.bookmark-text')
+  const base = element.__gsapHoverBase || rememberHoverBase(element)
+
+  gsap.killTweensOf([element, thumb, text].filter(Boolean))
+
+  const elementLeaveVars = {
+    y: 0,
+    boxShadow: base?.boxShadow,
+    backgroundColor: base?.backgroundColor,
+    duration: 0.2,
+    ease: 'power2.out',
+    overwrite: 'auto'
+  }
+
+  if (thumb) {
+    const thumbLeaveVars = {
+      scale: 1,
+      duration: 0.2,
+      ease: 'power2.out',
+      overwrite: 'auto',
+      clearProps: 'transform'
+    }
+
+    if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
+      gsap.set(thumb, omitMotionProps(thumbLeaveVars))
+    } else {
+      gsap.to(thumb, thumbLeaveVars)
+    }
+  }
+
+  if (text) {
+    const textLeaveVars = {
+      x: 0,
+      duration: 0.2,
+      ease: 'power2.out',
+      overwrite: 'auto',
+      clearProps: 'transform'
+    }
+
+    if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
+      gsap.set(text, omitMotionProps(textLeaveVars))
+    } else {
+      gsap.to(text, textLeaveVars)
+    }
+  }
+
+  if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
+    gsap.set(element, omitMotionProps(elementLeaveVars))
+    return
+  }
+
+  gsap.to(element, elementLeaveVars)
+}
+
+onUnmounted(() => {
+  if (isLocalDragging.value) {
+    isLocalDragging.value = false
+    setGlobalDragCount(getGlobalDragCount() - 1)
+  }
+  const targets = groupRef.value?.$el?.querySelectorAll?.('.bookmark-content, .bookmark-thumb-wrap, .folder-thumb, .bookmark-text')
+  if (!targets?.length) {
+    return
+  }
+  gsap.killTweensOf(Array.from(targets))
+})
+
 const forwardOpenContextMenu = (node, point) => emit('open-context-menu', node, point)
 const forwardOpenBookmark = (url) => emit('open-bookmark', url)
-const forwardReplaceNodes = (payload) => emit('replace-nodes', payload)
 const forwardDragEnd = (event) => emit('drag-end', event)
 </script>
 
@@ -132,7 +326,7 @@ const forwardDragEnd = (event) => emit('drag-end', event)
     handle=".drag-handle"
     :group="{ name: 'bookmark-tree', pull: true, put: true }"
     :move="onMove"
-    @update:modelValue="onUpdateNodes"
+    @start="onDragStart"
     @end="onDragEnd"
   >
     <li
@@ -163,7 +357,6 @@ const forwardDragEnd = (event) => emit('drag-end', event)
             @drag-end="forwardDragEnd"
             @open-bookmark="forwardOpenBookmark"
             @open-context-menu="forwardOpenContextMenu"
-            @replace-nodes="forwardReplaceNodes"
           />
         </div>
       </section>
@@ -174,6 +367,8 @@ const forwardDragEnd = (event) => emit('drag-end', event)
           :class="{ 'is-minimal': minimalMode }"
           @click="onContentClick(node, $event)"
           @contextmenu="onContextMenu(node, $event)"
+          @pointerenter="onBookmarkHoverEnter"
+          @pointerleave="onBookmarkHoverLeave"
         >
           <template v-if="!minimalMode">
             <a
@@ -229,7 +424,6 @@ const forwardDragEnd = (event) => emit('drag-end', event)
         @drag-end="forwardDragEnd"
         @open-bookmark="forwardOpenBookmark"
         @open-context-menu="forwardOpenContextMenu"
-        @replace-nodes="forwardReplaceNodes"
       />
     </li>
   </VueDraggable>
@@ -304,13 +498,9 @@ const forwardDragEnd = (event) => emit('drag-end', event)
   flex-shrink: 0;
   padding: 12px;
   box-shadow: var(--bookmark-card-shadow);
-  transition:
-    border-color 0.16s ease,
-    box-shadow 0.16s ease,
-    transform 0.12s ease,
-    opacity 0.12s ease;
   cursor: grab;
   touch-action: none;
+  will-change: transform, box-shadow;
 }
 
 .bookmark-content.is-minimal {
@@ -326,12 +516,6 @@ const forwardDragEnd = (event) => emit('drag-end', event)
   border: 0;
   box-shadow: none;
   border-radius: 0;
-}
-
-.bookmark-content:hover {
-  border-color: var(--bookmark-hover-border);
-  box-shadow: var(--bookmark-hover-shadow);
-  transform: translateY(-1px);
 }
 
 .bookmark-row.folder .bookmark-content {
@@ -448,12 +632,6 @@ const forwardDragEnd = (event) => emit('drag-end', event)
   display: block;
   white-space: nowrap;
   -webkit-line-clamp: unset;
-}
-
-.bookmark-content.is-minimal:hover {
-  border-color: transparent;
-  box-shadow: none;
-  transform: none;
 }
 
 .bookmark-text > a,
