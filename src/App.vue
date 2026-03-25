@@ -54,6 +54,7 @@ const contextMenu = ref({
 const THEME_KEY = 'bookmark-theme'
 const MINIMAL_MODE_KEY = 'bookmark-minimal-mode'
 const MAX_ANIMATED_BOOKMARKS = 24
+const ROOT_BOOKMARKS_TAB_ID = '__root_bookmarks__'
 
 let pageIntroTimeline = null
 let bookmarksTimeline = null
@@ -62,6 +63,8 @@ let motionMatcher = null
 let canAnimate = true
 let bookmarkAnimationQueued = false
 let isDragUpdating = false
+let initialIntroQueued = false
+let hasPlayedInitialIntro = false
 
 const editingKind = computed(() => {
   if (!editingNode.value) return ''
@@ -84,10 +87,23 @@ const hasBackgroundImage = computed(
 )
 const tabOptions = computed(() => {
   const folders = bookmarkTree.value.filter((node) => hasChildren(node))
-  return folders.map((folder) => ({
-    id: String(folder.id),
-    label: folder.title || '未命名目录'
-  }))
+  if (folders.length) {
+    return folders.map((folder) => ({
+      id: String(folder.id),
+      label: folder.title || '未命名目录'
+    }))
+  }
+
+  if (bookmarkTree.value.length) {
+    return [
+      {
+        id: ROOT_BOOKMARKS_TAB_ID,
+        label: '全部书签'
+      }
+    ]
+  }
+
+  return []
 })
 const visibleParentId = computed(() => {
   if (!tabOptions.value.length) {
@@ -95,6 +111,9 @@ const visibleParentId = computed(() => {
   }
 
   const targetTabId = activeTab.value || tabOptions.value[0].id
+  if (targetTabId === ROOT_BOOKMARKS_TAB_ID) {
+    return null
+  }
   const target = bookmarkTree.value.find((node) => String(node.id) === targetTabId)
   return target && hasChildren(target) ? String(target.id) : null
 })
@@ -542,14 +561,12 @@ const clearAnimationTargets = (targets) => {
 }
 
 const getIntroTargets = () => {
-  const tabButtons = tabsRef.value ? Array.from(tabsRef.value.querySelectorAll('.tab-btn')) : []
   const infoBlocks = contentRef.value
     ? Array.from(contentRef.value.querySelectorAll('.status, .warning, .empty'))
     : []
 
   return {
     topbar: topbarRef.value,
-    tabButtons,
     infoBlocks
   }
 }
@@ -572,8 +589,8 @@ const resetIntroAnimationState = () => {
   pageIntroTimeline?.kill()
   pageIntroTimeline = null
 
-  const { topbar, tabButtons, infoBlocks } = getIntroTargets()
-  clearAnimationTargets([topbar, ...tabButtons, ...infoBlocks].filter(Boolean))
+  const { topbar, infoBlocks } = getIntroTargets()
+  clearAnimationTargets([topbar, ...infoBlocks].filter(Boolean))
 }
 
 const animateVisibleBookmarks = () => {
@@ -631,17 +648,36 @@ const queueBookmarkAnimation = () => {
   })
 }
 
+const scheduleInitialIntro = () => {
+  if (loading.value || isDragUpdating || initialIntroQueued || hasPlayedInitialIntro) {
+    return
+  }
+
+  initialIntroQueued = true
+  nextTick(() => {
+    initialIntroQueued = false
+
+    if (loading.value || isDragUpdating || hasPlayedInitialIntro) {
+      return
+    }
+
+    hasPlayedInitialIntro = true
+    nextTick(syncTabButtonStates)
+    playPageIntro()
+  })
+}
+
 const playPageIntro = () => {
   resetIntroAnimationState()
 
-  const { topbar, tabButtons, infoBlocks } = getIntroTargets()
+  const { topbar, infoBlocks } = getIntroTargets()
 
   if (!topbar) {
     return
   }
 
   if (!canAnimate) {
-    clearAnimationTargets([topbar, ...tabButtons, ...infoBlocks].filter(Boolean))
+    clearAnimationTargets([topbar, ...infoBlocks].filter(Boolean))
     queueBookmarkAnimation()
     return
   }
@@ -651,14 +687,6 @@ const playPageIntro = () => {
     y: -20,
     force3D: true
   })
-
-  if (tabButtons.length) {
-    gsap.set(tabButtons, {
-      autoAlpha: 0,
-      y: -10,
-      force3D: true
-    })
-  }
 
   if (infoBlocks.length) {
     gsap.set(infoBlocks, {
@@ -680,20 +708,6 @@ const playPageIntro = () => {
     y: 0,
     clearProps: 'transform,opacity,visibility'
   })
-
-  if (tabButtons.length) {
-    pageIntroTimeline.to(
-      tabButtons,
-      {
-        autoAlpha: 1,
-        y: 0,
-        duration: 0.36,
-        stagger: 0.04,
-        clearProps: 'transform,opacity,visibility'
-      },
-      '<0.08'
-    )
-  }
 
   if (infoBlocks.length) {
     pageIntroTimeline.to(
@@ -1181,7 +1195,14 @@ watch(tabOptions, (tabs) => {
 })
 
 watch(activeTab, (nextTab, previousTab) => {
-  if (!nextTab || !previousTab || nextTab === previousTab || loading.value || isDragUpdating) {
+  if (
+    !nextTab ||
+    !previousTab ||
+    nextTab === previousTab ||
+    loading.value ||
+    isDragUpdating ||
+    !hasPlayedInitialIntro
+  ) {
     return
   }
 
@@ -1196,7 +1217,13 @@ watch(theme, () => {
 watch(
   () => visibleNodes.value,
   (nextNodes, previousNodes) => {
-    if (!previousNodes || nextNodes === previousNodes || loading.value || isDragUpdating) {
+    if (
+      !previousNodes ||
+      nextNodes === previousNodes ||
+      loading.value ||
+      isDragUpdating ||
+      !hasPlayedInitialIntro
+    ) {
       return
     }
 
@@ -1209,7 +1236,7 @@ watch(loading, (isLoading, wasLoading) => {
     return
   }
 
-  nextTick(playPageIntro)
+  scheduleInitialIntro()
 })
 
 onMounted(() => {
@@ -1234,8 +1261,7 @@ onMounted(() => {
       }
 
       if (!loading.value) {
-        nextTick(syncTabButtonStates)
-        playPageIntro()
+        scheduleInitialIntro()
       }
     }
   )
