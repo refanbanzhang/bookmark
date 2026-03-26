@@ -61,6 +61,16 @@ test('normalizes background settings and keeps image-enabled state', () => {
   })
 })
 
+test('respects explicit disabled state when image url exists', () => {
+  const settings = normalizeBackgroundSettings({
+    imageUrl: 'https://example.com/bg.jpg',
+    enabled: false
+  })
+
+  assert.equal(settings.enabled, false)
+  assert.equal(settings.imageUrl, 'https://example.com/bg.jpg')
+})
+
 test('loads defaults for missing or invalid data', async () => {
   const storage = createMemoryStorage({
     [BACKGROUND_SETTINGS_KEY]: '{"imageUrl":123,"opacity":"oops"}'
@@ -83,7 +93,7 @@ test('saves normalized settings and clears them', async () => {
   const imageStore = createImageStore()
   const saved = await saveBackgroundSettings({ imageUrl: 'https://example.com/bg.png', enabled: false }, storage, imageStore)
 
-  assert.equal(saved.enabled, true)
+  assert.equal(saved.enabled, false)
   assert.equal(storage.dump()[BACKGROUND_SETTINGS_KEY], JSON.stringify({ ...saved, imageStorage: '' }))
 
   const cleared = await clearBackgroundSettings(storage, imageStore)

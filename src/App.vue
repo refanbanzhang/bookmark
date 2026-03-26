@@ -842,7 +842,7 @@ const saveBackgroundSettingsForm = async () => {
     await persistBackgroundSettings({
       ...backgroundDraft.value,
       imageUrl: nextImageUrl,
-      enabled: backgroundDraft.value.enabled || Boolean(nextImageUrl)
+      enabled: backgroundDraft.value.enabled
     })
     closeBackgroundSettings()
   } catch (error) {
@@ -947,10 +947,22 @@ const getChromeNodeOps = () => {
   }
 }
 
-const openBookmarkUrl = (url) => {
+const openBookmarkUrl = (url, options = {}) => {
   if (!url) {
     return
   }
+
+  const shouldOpenInBackground = Boolean(options?.background)
+  if (typeof window !== 'undefined' && window.chrome?.tabs?.create) {
+    window.chrome.tabs.create({ url, active: !shouldOpenInBackground }, () => {
+      const error = window.chrome?.runtime?.lastError
+      if (error) {
+        window.open(url, '_blank', 'noopener,noreferrer')
+      }
+    })
+    return
+  }
+
   window.open(url, '_blank', 'noopener,noreferrer')
 }
 

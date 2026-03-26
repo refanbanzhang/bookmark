@@ -92,7 +92,16 @@ const onContentClick = (node, event) => {
   if (!node?.url || event.target.closest('a')) {
     return
   }
-  emit('open-bookmark', node.url)
+  emit('open-bookmark', node.url, { background: false })
+}
+
+const onContentAuxClick = (node, event) => {
+  if (!node?.url || event.button !== 1 || event.target.closest('a')) {
+    return
+  }
+
+  event.preventDefault()
+  emit('open-bookmark', node.url, { background: true })
 }
 
 const onMove = (event) => {
@@ -310,7 +319,7 @@ onUnmounted(() => {
 })
 
 const forwardOpenContextMenu = (node, point) => emit('open-context-menu', node, point)
-const forwardOpenBookmark = (url) => emit('open-bookmark', url)
+const forwardOpenBookmark = (url, options) => emit('open-bookmark', url, options)
 const forwardDragEnd = (event) => emit('drag-end', event)
 </script>
 
@@ -374,7 +383,10 @@ const forwardDragEnd = (event) => emit('drag-end', event)
             'is-media-left': !minimalMode && cardLayout === 'media-left'
           }"
           @click="onContentClick(node, $event)"
+          @auxclick="onContentAuxClick(node, $event)"
           @contextmenu="onContextMenu(node, $event)"
+          @mouseenter="onBookmarkHoverEnter"
+          @mouseleave="onBookmarkHoverLeave"
         >
           <template v-if="!minimalMode">
             <a

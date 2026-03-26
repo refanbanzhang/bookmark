@@ -143,7 +143,7 @@ const resolvePersistedImageUrl = async (parsed, imageStore) => {
 export const normalizeBackgroundSettings = (value = {}) => {
   const fallback = createDefaultBackgroundSettings()
   const imageUrl = toTrimmedString(value.imageUrl ?? value.url ?? '')
-  const enabled = Boolean(value.enabled) || Boolean(imageUrl)
+  const enabled = value.enabled === undefined ? Boolean(imageUrl) : Boolean(value.enabled)
   const opacity = Number(value.opacity)
   const backdropBlur = Number(value.backdropBlur)
   const cardRadius = Number(value.cardRadius)
