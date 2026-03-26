@@ -506,7 +506,7 @@ const forwardDragEnd = (event) => emit('drag-end', event)
   gap: 8px;
   background: var(--bookmark-card-bg);
   border: 1px solid var(--bookmark-card-border);
-  border-radius: var(--radius-base);
+  border-radius: var(--bookmark-card-radius, var(--radius-base));
   width: 100%;
   flex-shrink: 0;
   padding: 12px;
@@ -578,7 +578,7 @@ const forwardDragEnd = (event) => emit('drag-end', event)
   box-shadow:
     0 1px 2px rgba(15, 23, 42, 0.06),
     var(--thumb-inset);
-  border-radius: 10px;
+  border-radius: var(--bookmark-thumb-radius, 10px);
   position: relative;
   overflow: hidden;
   background: var(--thumb-surface);
@@ -614,7 +614,7 @@ const forwardDragEnd = (event) => emit('drag-end', event)
   box-shadow:
     0 1px 2px rgba(15, 23, 42, 0.06),
     var(--thumb-inset);
-  border-radius: var(--radius-base);
+  border-radius: var(--bookmark-thumb-radius, var(--radius-base));
   font-size: 12px;
   font-weight: 700;
   color: var(--folder-thumb-text);
@@ -630,7 +630,7 @@ const forwardDragEnd = (event) => emit('drag-end', event)
   box-shadow:
     0 1px 2px rgba(15, 23, 42, 0.06),
     var(--thumb-inset);
-  border-radius: var(--radius-base);
+  border-radius: var(--bookmark-thumb-radius, var(--radius-base));
   color: var(--thumb-placeholder-text);
   font-size: 12px;
   font-weight: 600;
@@ -701,17 +701,25 @@ const forwardDragEnd = (event) => emit('drag-end', event)
   color: var(--folder-title-text);
 }
 
-.bookmark-sort-ghost {
-  opacity: 0.22;
-}
-
 .bookmark-sort-chosen .bookmark-content,
-.bookmark-sort-chosen.module-section {
-  box-shadow: 0 0 0 2px rgba(37, 99, 235, 0.18), var(--bookmark-hover-shadow);
+.bookmark-sort-drag .bookmark-content {
+  border-style: dashed;
+  border-color: rgba(37, 99, 235, 0.42);
+  box-shadow: none;
+  background: var(--bookmark-card-bg);
 }
 
-.bookmark-sort-drag {
-  opacity: 0.92;
+.bookmark-sort-chosen.module-section,
+.bookmark-sort-drag.module-section {
+  outline: 2px dashed rgba(37, 99, 235, 0.42);
+  outline-offset: 6px;
+  box-shadow: none;
+}
+
+.bookmark-sort-chosen .bookmark-row.folder .bookmark-content,
+.bookmark-sort-drag .bookmark-row.folder .bookmark-content {
+  background: var(--folder-card-bg);
+  border-color: rgba(37, 99, 235, 0.42);
 }
 
 @media (max-width: 768px) {

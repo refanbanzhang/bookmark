@@ -15,6 +15,7 @@ import {
   clearBackgroundSettings,
   createDefaultBackgroundSettings,
   loadBackgroundSettings,
+  normalizeBackgroundSettings,
   saveBackgroundSettings
 } from './utils/backgroundSettings'
 
@@ -85,8 +86,13 @@ const contextMenuStyle = computed(() => ({
   left: `${contextMenu.value.x}px`,
   top: `${contextMenu.value.y}px`
 }))
+const previewBackgroundSettings = computed(() =>
+  backgroundSettingsOpen.value
+    ? normalizeBackgroundSettings(backgroundDraft.value)
+    : backgroundSettings.value
+)
 const hasBackgroundImage = computed(
-  () => backgroundSettings.value.enabled && Boolean(backgroundSettings.value.imageUrl)
+  () => previewBackgroundSettings.value.enabled && Boolean(previewBackgroundSettings.value.imageUrl)
 )
 const tabOptions = computed(() => {
   const folders = bookmarkTree.value.filter((node) => hasChildren(node))
@@ -138,26 +144,27 @@ const pageBackdropStyle = computed(() => {
     return {}
   }
 
+  const blur = Number(previewBackgroundSettings.value.backdropBlur) || 0
+  const scale = 1 + blur / 180
+
   return {
-    backgroundImage: `url(${JSON.stringify(backgroundSettings.value.imageUrl)})`,
-    backgroundPosition: backgroundSettings.value.position,
-    backgroundRepeat: backgroundSettings.value.repeat,
-    backgroundSize: backgroundSettings.value.size,
-    opacity: backgroundSettings.value.opacity
+    backgroundImage: `url(${JSON.stringify(previewBackgroundSettings.value.imageUrl)})`,
+    backgroundPosition: previewBackgroundSettings.value.position,
+    backgroundRepeat: previewBackgroundSettings.value.repeat,
+    backgroundSize: previewBackgroundSettings.value.size,
+    opacity: previewBackgroundSettings.value.opacity,
+    filter: blur > 0 ? `blur(${blur}px) saturate(1.05)` : 'none',
+    transform: blur > 0 ? `scale(${scale})` : 'none'
   }
 })
 
-const backgroundPreviewStyle = computed(() => {
-  if (!backgroundDraft.value.imageUrl) {
-    return {}
-  }
+const pageShellStyle = computed(() => {
+  const cardRadius = Number(previewBackgroundSettings.value.cardRadius) || 0
+  const thumbRadius = Math.max(0, cardRadius - 2)
 
   return {
-    backgroundImage: `url(${JSON.stringify(backgroundDraft.value.imageUrl)})`,
-    backgroundPosition: backgroundDraft.value.position,
-    backgroundRepeat: backgroundDraft.value.repeat,
-    backgroundSize: backgroundDraft.value.size,
-    opacity: backgroundDraft.value.opacity
+    '--bookmark-card-radius': `${cardRadius}px`,
+    '--bookmark-thumb-radius': `${thumbRadius}px`
   }
 })
 
@@ -166,11 +173,9 @@ const contentStyle = computed(() => {
     return {}
   }
 
-  const blur = backgroundSettings.value.backdropBlur
-
   return {
     background: 'transparent',
-    backdropFilter: blur > 0 ? `blur(${blur}px) saturate(1.05)` : 'none'
+    backdropFilter: 'none'
   }
 })
 
@@ -311,7 +316,8 @@ const animateThemeToggle = (nextTheme) => {
       if (switchButton.matches(':hover')) {
         gsap.set(switchButton, {
           color: getRootCssVar('--theme-switch-fg-hover'),
-          backgroundColor: getRootCssVar('--theme-switch-bg-hover')
+          backgroundColor: getRootCssVar('--theme-switch-bg-hover'),
+          borderColor: getRootCssVar('--theme-switch-border-hover')
         })
       }
     })
@@ -377,8 +383,8 @@ const toggleCardLayout = () => {
   localStorage.setItem(CARD_LAYOUT_KEY, cardLayout.value)
 }
 
-const initBackgroundSettings = () => {
-  backgroundSettings.value = loadBackgroundSettings()
+const initBackgroundSettings = async () => {
+  backgroundSettings.value = await loadBackgroundSettings()
 }
 
 const getRootCssVar = (name) => getComputedStyle(document.documentElement).getPropertyValue(name).trim()
@@ -511,7 +517,8 @@ const onThemeSwitchHoverEnter = (event) => {
     y: -1,
     scale: 1.03,
     color: getRootCssVar('--theme-switch-fg-hover'),
-    backgroundColor: getRootCssVar('--theme-switch-bg-hover')
+    backgroundColor: getRootCssVar('--theme-switch-bg-hover'),
+    borderColor: getRootCssVar('--theme-switch-border-hover')
   })
 }
 
@@ -815,15 +822,15 @@ const closeBackgroundSettings = () => {
   backgroundError.value = ''
 }
 
-const persistBackgroundSettings = (nextSettings) => {
-  const saved = saveBackgroundSettings(nextSettings)
+const persistBackgroundSettings = async (nextSettings) => {
+  const saved = await saveBackgroundSettings(nextSettings)
   backgroundSettings.value = saved
   backgroundDraft.value = { ...saved }
   backgroundError.value = ''
   return saved
 }
 
-const saveBackgroundSettingsForm = () => {
+const saveBackgroundSettingsForm = async () => {
   const nextImageUrl = backgroundDraft.value.imageUrl.trim()
 
   if (backgroundDraft.value.enabled && !nextImageUrl) {
@@ -831,16 +838,20 @@ const saveBackgroundSettingsForm = () => {
     return
   }
 
-  persistBackgroundSettings({
-    ...backgroundDraft.value,
-    imageUrl: nextImageUrl,
-    enabled: backgroundDraft.value.enabled || Boolean(nextImageUrl)
-  })
-  closeBackgroundSettings()
+  try {
+    await persistBackgroundSettings({
+      ...backgroundDraft.value,
+      imageUrl: nextImageUrl,
+      enabled: backgroundDraft.value.enabled || Boolean(nextImageUrl)
+    })
+    closeBackgroundSettings()
+  } catch (error) {
+    backgroundError.value = error instanceof Error ? error.message : '背景设置保存失败。'
+  }
 }
 
-const clearBackgroundImage = () => {
-  const cleared = clearBackgroundSettings()
+const clearBackgroundImage = async () => {
+  const cleared = await clearBackgroundSettings()
   backgroundSettings.value = cleared
   backgroundDraft.value = { ...cleared }
   backgroundError.value = ''
@@ -1268,7 +1279,7 @@ onMounted(() => {
   initMinimalMode()
   initCardLayout()
   initActiveTab()
-  initBackgroundSettings()
+  void initBackgroundSettings()
   void loadBookmarks()
 
   window.addEventListener('resize', closeContextMenu)
@@ -1290,7 +1301,7 @@ onUnmounted(() => {
 </script>
 
 <template>
-  <main ref="pageShellRef" class="page-shell" @click="closeContextMenu">
+  <main ref="pageShellRef" class="page-shell" :style="pageShellStyle" @click="closeContextMenu">
     <div
       ref="pageBackdropRef"
       class="page-backdrop"
@@ -1313,6 +1324,15 @@ onUnmounted(() => {
           </button>
         </nav>
         <div class="topbar-actions">
+          <button
+            class="theme-switch"
+            type="button"
+            aria-label="打开外观设置"
+            title="外观设置"
+            @click="openBackgroundSettings"
+          >
+            <span class="material-symbols-outlined theme-switch-icon" aria-hidden="true">palette</span>
+          </button>
           <button
             class="theme-switch"
             type="button"
@@ -1363,10 +1383,10 @@ onUnmounted(() => {
       <p v-else-if="!loading" class="empty">暂无书签，请先在 Chrome 中添加内容。</p>
     </div>
 
-    <div v-if="backgroundSettingsOpen" class="modal-overlay" @click.self="closeBackgroundSettings">
-      <div class="modal-card modal-card-wide" role="dialog" aria-modal="true" aria-label="配置背景图">
+    <div v-if="backgroundSettingsOpen" class="modal-overlay modal-overlay-clear" @click.self="closeBackgroundSettings">
+      <div class="modal-card modal-card-wide" role="dialog" aria-modal="true" aria-label="外观设置">
         <div class="modal-header">
-          <h3 class="modal-title">配置背景图</h3>
+          <h3 class="modal-title">外观设置</h3>
           <button
             class="modal-close"
             type="button"
@@ -1376,10 +1396,15 @@ onUnmounted(() => {
           </button>
         </div>
 
-        <p class="modal-meta">支持图片地址或本地上传，保存后会持久化到本地。</p>
+        <p class="modal-meta">支持背景图、本地上传和书签卡片圆角调节，保存后会持久化到本地。</p>
 
         <div class="background-settings-layout">
           <section class="background-settings-panel">
+            <div class="settings-panel-header">
+              <h4 class="settings-panel-title">背景调整</h4>
+              <p class="settings-panel-meta">背景图地址、上传、启用和透明磨砂效果统一放在这里。</p>
+            </div>
+
             <label class="modal-field">
               <span>图片地址</span>
               <input
@@ -1394,9 +1419,12 @@ onUnmounted(() => {
               <button class="action-button" type="button" @click="triggerBackgroundUpload">上传本地图片</button>
               <button class="action-button" type="button" @click="clearBackgroundImage">清除背景</button>
             </div>
-          </section>
 
-          <section class="background-settings-panel background-settings-panel-controls">
+            <label class="background-switch">
+              <input v-model="backgroundDraft.enabled" type="checkbox" />
+              <span>启用背景图</span>
+            </label>
+
             <label class="modal-field modal-field-range">
               <span>背景显示强度</span>
               <div class="range-row">
@@ -1406,21 +1434,30 @@ onUnmounted(() => {
             </label>
 
             <label class="modal-field modal-field-range">
-              <span>磨砂强度</span>
+              <span>背景磨砂强度</span>
               <div class="range-row">
                 <input v-model.number="backgroundDraft.backdropBlur" type="range" min="0" max="24" step="1" />
                 <strong>{{ Math.round(backgroundDraft.backdropBlur) }}px</strong>
               </div>
             </label>
 
-            <label class="background-switch">
-              <input v-model="backgroundDraft.enabled" type="checkbox" />
-              <span>启用背景图</span>
+          </section>
+
+          <section class="background-settings-panel background-settings-panel-controls">
+            <div class="settings-panel-header">
+              <h4 class="settings-panel-title">卡片样式</h4>
+              <p class="settings-panel-meta">单独调整书签卡片圆角。</p>
+            </div>
+
+            <label class="modal-field modal-field-range">
+              <span>卡片圆角</span>
+              <div class="range-row">
+                <input v-model.number="backgroundDraft.cardRadius" type="range" min="0" max="28" step="1" />
+                <strong>{{ Math.round(backgroundDraft.cardRadius) }}px</strong>
+              </div>
             </label>
           </section>
         </div>
-
-        <div v-if="backgroundPreviewStyle.backgroundImage" class="background-preview" :style="backgroundPreviewStyle"></div>
 
         <p v-if="backgroundError" class="modal-error">{{ backgroundError }}</p>
 
