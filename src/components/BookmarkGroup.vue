@@ -23,6 +23,10 @@ const props = defineProps({
     type: Boolean,
     default: false
   },
+  cardLayout: {
+    type: String,
+    default: 'stacked'
+  },
   canMove: {
     type: Function,
     default: null
@@ -315,7 +319,7 @@ const forwardDragEnd = (event) => emit('drag-end', event)
     ref="groupRef"
     tag="ul"
     class="bookmark-group"
-    :class="[depthClass, { 'is-minimal': minimalMode }]"
+    :class="[depthClass, { 'is-minimal': minimalMode, 'is-media-left-layout': !minimalMode && cardLayout === 'media-left' }]"
     :model-value="nodes"
     :animation="180"
     :data-group-parent-id="parentIdValue"
@@ -353,6 +357,7 @@ const forwardDragEnd = (event) => emit('drag-end', event)
             :parent-id="node.id"
             :depth="depth + 1"
             :minimal-mode="minimalMode"
+            :card-layout="cardLayout"
             :can-move="canMove"
             @drag-end="forwardDragEnd"
             @open-bookmark="forwardOpenBookmark"
@@ -364,7 +369,10 @@ const forwardDragEnd = (event) => emit('drag-end', event)
       <div v-else class="bookmark-row" :class="{ folder: hasChildren(node) }">
         <div
           class="bookmark-content drag-handle"
-          :class="{ 'is-minimal': minimalMode }"
+          :class="{
+            'is-minimal': minimalMode,
+            'is-media-left': !minimalMode && cardLayout === 'media-left'
+          }"
           @click="onContentClick(node, $event)"
           @contextmenu="onContextMenu(node, $event)"
           @pointerenter="onBookmarkHoverEnter"
@@ -420,6 +428,7 @@ const forwardDragEnd = (event) => emit('drag-end', event)
         :parent-id="node.id"
         :depth="depth + 1"
         :minimal-mode="minimalMode"
+        :card-layout="cardLayout"
         :can-move="canMove"
         @drag-end="forwardDragEnd"
         @open-bookmark="forwardOpenBookmark"
@@ -432,7 +441,8 @@ const forwardDragEnd = (event) => emit('drag-end', event)
 <style scoped>
 .bookmark-group {
   --bookmark-thumb-size: 42px;
-  --bookmark-card-width: 180px;
+  --bookmark-card-gap: 10px;
+  --bookmark-card-width: calc((100% - (var(--bookmark-card-gap) * 4)) / 5);
   list-style: none;
   margin: 0;
   padding: 0;
@@ -441,7 +451,7 @@ const forwardDragEnd = (event) => emit('drag-end', event)
   flex-wrap: wrap;
   align-items: flex-start;
   row-gap: 8px;
-  column-gap: 10px;
+  column-gap: var(--bookmark-card-gap);
 }
 
 .bookmark-group.is-minimal {
@@ -479,6 +489,11 @@ const forwardDragEnd = (event) => emit('drag-end', event)
 
 .bookmark-item:not(.is-root-folder) {
   flex: 0 0 auto;
+  width: var(--bookmark-card-width);
+}
+
+.bookmark-group.is-media-left-layout > .bookmark-item:not(.is-root-folder) {
+  width: calc((100% - (var(--bookmark-card-gap) * 3)) / 4);
 }
 
 .bookmark-row {
@@ -494,7 +509,7 @@ const forwardDragEnd = (event) => emit('drag-end', event)
   background: var(--bookmark-card-bg);
   border: 1px solid var(--bookmark-card-border);
   border-radius: var(--radius-base);
-  width: var(--bookmark-card-width);
+  width: 100%;
   flex-shrink: 0;
   padding: 12px;
   box-shadow: var(--bookmark-card-shadow);
@@ -516,6 +531,12 @@ const forwardDragEnd = (event) => emit('drag-end', event)
   border: 0;
   box-shadow: none;
   border-radius: 0;
+}
+
+.bookmark-content.is-media-left {
+  flex-direction: row;
+  align-items: center;
+  min-height: calc(var(--bookmark-thumb-size) + 20px);
 }
 
 .bookmark-row.folder .bookmark-content {
@@ -550,6 +571,7 @@ const forwardDragEnd = (event) => emit('drag-end', event)
 .bookmark-thumb-wrap {
   width: var(--bookmark-thumb-size);
   height: var(--bookmark-thumb-size);
+  flex-shrink: 0;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -586,6 +608,7 @@ const forwardDragEnd = (event) => emit('drag-end', event)
 
 .folder-thumb {
   display: flex;
+  flex-shrink: 0;
   align-items: center;
   justify-content: center;
   padding: 0;
@@ -619,6 +642,13 @@ const forwardDragEnd = (event) => emit('drag-end', event)
 .bookmark-text {
   min-width: 0;
   width: 100%;
+}
+
+.bookmark-content.is-media-left .bookmark-text {
+  display: flex;
+  min-height: var(--bookmark-thumb-size);
+  flex-direction: column;
+  justify-content: center;
 }
 
 .bookmark-text.is-minimal {
@@ -688,11 +718,20 @@ const forwardDragEnd = (event) => emit('drag-end', event)
 
 @media (max-width: 768px) {
   .bookmark-group {
-    --bookmark-card-width: 160px;
+    --bookmark-card-gap: 8px;
+    --bookmark-card-width: calc((100% - var(--bookmark-card-gap)) / 2);
+  }
+
+  .bookmark-group.is-media-left-layout > .bookmark-item:not(.is-root-folder) {
+    width: 100%;
   }
 
   .bookmark-content {
     padding: 10px;
+  }
+
+  .bookmark-content.is-media-left {
+    width: 100%;
   }
 
   .bookmark-content.is-minimal {

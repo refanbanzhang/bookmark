@@ -25,6 +25,7 @@ const warning = ref('')
 const activeTab = ref('')
 const theme = ref('light')
 const minimalMode = ref(false)
+const cardLayout = ref('stacked')
 const pageShellRef = ref(null)
 const pageBackdropRef = ref(null)
 const contentRef = ref(null)
@@ -53,6 +54,7 @@ const contextMenu = ref({
 
 const THEME_KEY = 'bookmark-theme'
 const MINIMAL_MODE_KEY = 'bookmark-minimal-mode'
+const CARD_LAYOUT_KEY = 'bookmark-card-layout'
 const MAX_ANIMATED_BOOKMARKS = 24
 const ROOT_BOOKMARKS_TAB_ID = '__root_bookmarks__'
 
@@ -356,6 +358,15 @@ const initMinimalMode = () => {
 const toggleMinimalMode = () => {
   minimalMode.value = !minimalMode.value
   localStorage.setItem(MINIMAL_MODE_KEY, String(minimalMode.value))
+}
+
+const initCardLayout = () => {
+  cardLayout.value = localStorage.getItem(CARD_LAYOUT_KEY) === 'media-left' ? 'media-left' : 'stacked'
+}
+
+const toggleCardLayout = () => {
+  cardLayout.value = cardLayout.value === 'media-left' ? 'stacked' : 'media-left'
+  localStorage.setItem(CARD_LAYOUT_KEY, cardLayout.value)
 }
 
 const initBackgroundSettings = () => {
@@ -1242,6 +1253,7 @@ watch(loading, (isLoading, wasLoading) => {
 onMounted(() => {
   initTheme()
   initMinimalMode()
+  initCardLayout()
   initBackgroundSettings()
   void loadBookmarks()
 
@@ -1311,6 +1323,17 @@ onUnmounted(() => {
         </nav>
         <div class="topbar-actions">
           <button
+            class="theme-switch"
+            type="button"
+            :aria-label="cardLayout === 'media-left' ? '切换为上下卡片布局' : '切换为左图右文卡片布局'"
+            :title="cardLayout === 'media-left' ? '当前为左图右文' : '切换为左图右文'"
+            @click="toggleCardLayout"
+          >
+            <span class="material-symbols-outlined theme-switch-icon" aria-hidden="true">{{
+              cardLayout === 'media-left' ? 'view_agenda' : 'dashboard_customize'
+            }}</span>
+          </button>
+          <button
             ref="themeSwitchRef"
             class="theme-switch"
             type="button"
@@ -1340,6 +1363,7 @@ onUnmounted(() => {
           :parent-id="visibleParentId"
           :depth="0"
           :minimal-mode="minimalMode"
+          :card-layout="cardLayout"
           :can-move="canMoveNode"
           @drag-end="handleDragEnd"
           @open-bookmark="openBookmarkUrl"
