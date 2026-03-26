@@ -321,7 +321,7 @@ const forwardDragEnd = (event) => emit('drag-end', event)
     class="bookmark-group"
     :class="[depthClass, { 'is-minimal': minimalMode, 'is-media-left-layout': !minimalMode && cardLayout === 'media-left' }]"
     :model-value="nodes"
-    :animation="180"
+    :animation="0"
     :data-group-parent-id="parentIdValue"
     draggable="li.bookmark-item"
     ghost-class="bookmark-sort-ghost"
@@ -375,8 +375,6 @@ const forwardDragEnd = (event) => emit('drag-end', event)
           }"
           @click="onContentClick(node, $event)"
           @contextmenu="onContextMenu(node, $event)"
-          @pointerenter="onBookmarkHoverEnter"
-          @pointerleave="onBookmarkHoverLeave"
         >
           <template v-if="!minimalMode">
             <a

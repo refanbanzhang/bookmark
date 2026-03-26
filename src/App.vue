@@ -55,6 +55,7 @@ const contextMenu = ref({
 const THEME_KEY = 'bookmark-theme'
 const MINIMAL_MODE_KEY = 'bookmark-minimal-mode'
 const CARD_LAYOUT_KEY = 'bookmark-card-layout'
+const ACTIVE_TAB_KEY = 'bookmark-active-tab'
 const MAX_ANIMATED_BOOKMARKS = 24
 const ROOT_BOOKMARKS_TAB_ID = '__root_bookmarks__'
 
@@ -62,7 +63,7 @@ let pageIntroTimeline = null
 let bookmarksTimeline = null
 let themeToggleTimeline = null
 let motionMatcher = null
-let canAnimate = true
+let canAnimate = false
 let bookmarkAnimationQueued = false
 let isDragUpdating = false
 let initialIntroQueued = false
@@ -236,6 +237,9 @@ const initTheme = () => {
   applyTheme(preferDark ? 'dark' : 'light')
 }
 
+const prefersReducedMotion = () =>
+  typeof window !== 'undefined' && (window.matchMedia?.('(prefers-reduced-motion: reduce)')?.matches ?? false)
+
 const getThemeTransitionTargets = () => {
   return [hasBackgroundImage.value ? pageBackdropRef.value : null, contentRef.value].filter(Boolean)
 }
@@ -248,7 +252,7 @@ const clearThemeTransitionState = () => {
 }
 
 const animateThemeToggle = (nextTheme) => {
-  if (!canAnimate) {
+  if (prefersReducedMotion()) {
     applyTheme(nextTheme)
     return
   }
@@ -362,6 +366,10 @@ const toggleMinimalMode = () => {
 
 const initCardLayout = () => {
   cardLayout.value = localStorage.getItem(CARD_LAYOUT_KEY) === 'media-left' ? 'media-left' : 'stacked'
+}
+
+const initActiveTab = () => {
+  activeTab.value = localStorage.getItem(ACTIVE_TAB_KEY) || ''
 }
 
 const toggleCardLayout = () => {
@@ -886,6 +894,7 @@ const syncStatusForMode = () => {
 
 const switchTab = (tabId) => {
   activeTab.value = tabId
+  localStorage.setItem(ACTIVE_TAB_KEY, tabId)
 }
 
 const loadBookmarks = async () => {
@@ -1197,11 +1206,15 @@ watch(editingNode, async (node) => {
 watch(tabOptions, (tabs) => {
   if (!tabs.length) {
     activeTab.value = ''
+    localStorage.removeItem(ACTIVE_TAB_KEY)
     return
   }
+
+  const savedTabId = localStorage.getItem(ACTIVE_TAB_KEY) || ''
   const exists = tabs.some((tab) => tab.id === activeTab.value)
   if (!exists) {
-    activeTab.value = tabs[0].id
+    activeTab.value = tabs.some((tab) => tab.id === savedTabId) ? savedTabId : tabs[0].id
+    localStorage.setItem(ACTIVE_TAB_KEY, activeTab.value)
   }
 })
 
@@ -1254,29 +1267,9 @@ onMounted(() => {
   initTheme()
   initMinimalMode()
   initCardLayout()
+  initActiveTab()
   initBackgroundSettings()
   void loadBookmarks()
-
-  motionMatcher = gsap.matchMedia()
-  motionMatcher.add(
-    {
-      reduceMotion: '(prefers-reduced-motion: reduce)',
-      allowMotion: '(prefers-reduced-motion: no-preference)'
-    },
-    (context) => {
-      canAnimate = !context.conditions.reduceMotion
-
-      if (!canAnimate) {
-        resetIntroAnimationState()
-        resetBookmarkAnimationState()
-        return
-      }
-
-      if (!loading.value) {
-        scheduleInitialIntro()
-      }
-    }
-  )
 
   window.addEventListener('resize', closeContextMenu)
   window.addEventListener('scroll', closeContextMenu, true)
@@ -1315,8 +1308,6 @@ onUnmounted(() => {
             :class="{ 'tab-btn-active': activeTab === tab.id }"
             type="button"
             @click="switchTab(tab.id)"
-            @pointerenter="onTabHoverEnter"
-            @pointerleave="onTabHoverLeave"
           >
             {{ tab.label }}
           </button>
@@ -1340,8 +1331,6 @@ onUnmounted(() => {
             :aria-label="theme === 'dark' ? '切换为浅色' : '切换为夜间'"
             title="切换外观"
             @click="toggleTheme"
-            @pointerenter="onThemeSwitchHoverEnter"
-            @pointerleave="onThemeSwitchHoverLeave"
           >
             <span ref="themeSwitchIconRef" class="material-symbols-outlined theme-switch-icon" aria-hidden="true">{{
               theme === 'dark' ? 'dark_mode' : 'light_mode'
@@ -1382,8 +1371,6 @@ onUnmounted(() => {
             class="modal-close"
             type="button"
             @click="closeBackgroundSettings"
-            @pointerenter="onModalCloseHoverEnter"
-            @pointerleave="onModalCloseHoverLeave"
           >
             ×
           </button>
@@ -1462,8 +1449,6 @@ onUnmounted(() => {
             class="modal-close"
             type="button"
             @click="closeEdit"
-            @pointerenter="onModalCloseHoverEnter"
-            @pointerleave="onModalCloseHoverLeave"
           >
             ×
           </button>
@@ -1501,8 +1486,6 @@ onUnmounted(() => {
             class="modal-close"
             type="button"
             @click="closeDeleteConfirm"
-            @pointerenter="onModalCloseHoverEnter"
-            @pointerleave="onModalCloseHoverLeave"
           >
             ×
           </button>
@@ -1532,8 +1515,6 @@ onUnmounted(() => {
         class="context-menu-item"
         type="button"
         @click="handleContextRename"
-        @pointerenter="onContextMenuItemHoverEnter"
-        @pointerleave="onContextMenuItemHoverLeave"
       >
         重命名{{ contextKind }}
       </button>
@@ -1541,8 +1522,6 @@ onUnmounted(() => {
         class="context-menu-item context-menu-item-danger"
         type="button"
         @click="handleContextDelete"
-        @pointerenter="onContextMenuItemHoverEnter"
-        @pointerleave="onContextMenuItemHoverLeave"
       >
         删除{{ contextKind }}
       </button>
