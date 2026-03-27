@@ -5,7 +5,7 @@ const cloneNode = (node) => ({
 
 export const cloneNodes = (nodes = []) => nodes.map((node) => cloneNode(node))
 
-export const hasChildren = (node) => Array.isArray(node?.children) && node.children.length > 0
+export const hasChildren = (node) => Array.isArray(node?.children)
 
 export const collectNodeIds = (nodes = [], output = []) => {
   for (const node of nodes) {

@@ -55,7 +55,7 @@ const parentIdValue = computed(() =>
     : String(props.parentId)
 )
 
-const hasChildren = (node) => Array.isArray(node?.children) && node.children.length > 0
+const hasChildren = (node) => Array.isArray(node?.children)
 const isRootFolder = (node) => props.depth === 0 && hasChildren(node)
 const getHost = (url) => {
   if (!url) return ''
@@ -596,7 +596,9 @@ const forwardDragEnd = (event) => emit('drag-end', event)
   box-shadow: var(--bookmark-card-shadow);
   cursor: grab;
   touch-action: none;
-  will-change: transform, box-shadow;
+  backdrop-filter: var(--bookmark-card-backdrop-filter, none);
+  -webkit-backdrop-filter: var(--bookmark-card-backdrop-filter, none);
+  will-change: transform, box-shadow, backdrop-filter;
 }
 
 .bookmark-content.is-minimal {
@@ -777,7 +779,7 @@ const forwardDragEnd = (event) => emit('drag-end', event)
   font-size: 11px;
   line-height: 1.2;
   font-weight: 400;
-  color: color-mix(in srgb, var(--muted) 72%, transparent);
+  color: var(--bookmark-host-color);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -789,6 +791,14 @@ const forwardDragEnd = (event) => emit('drag-end', event)
 
 .bookmark-row.folder .bookmark-text > span:first-child {
   color: var(--folder-title-text);
+  overflow: visible;
+  display: block;
+  white-space: normal;
+  -webkit-line-clamp: unset;
+}
+
+.bookmark-row.folder .bookmark-text.is-minimal span {
+  white-space: normal;
 }
 
 .bookmark-sort-chosen .bookmark-content,

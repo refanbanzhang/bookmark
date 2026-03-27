@@ -33,6 +33,8 @@ const pageBackdropRef = ref(null)
 const contentRef = ref(null)
 const topbarRef = ref(null)
 const tabsRef = ref(null)
+const tabHighlightRef = ref(null)
+const directoryViewRef = ref(null)
 const modulesRef = ref(null)
 const themeSwitchRef = ref(null)
 const themeSwitchIconRef = ref(null)
@@ -65,6 +67,8 @@ const ROOT_BOOKMARKS_TAB_ID = '__root_bookmarks__'
 
 let pageIntroTimeline = null
 let bookmarksTimeline = null
+let directorySwitchTimeline = null
+let tabHighlightTimeline = null
 let themeToggleTimeline = null
 let motionMatcher = null
 let canAnimate = false
@@ -72,6 +76,8 @@ let bookmarkAnimationQueued = false
 let isDragUpdating = false
 let initialIntroQueued = false
 let hasPlayedInitialIntro = false
+let isTabSwitchAnimating = false
+let pendingTabSwitchId = ''
 
 const editingKind = computed(() => {
   if (!editingNode.value) return ''
@@ -162,12 +168,26 @@ const pageBackdropStyle = computed(() => {
 })
 
 const pageShellStyle = computed(() => {
+  const isDark = theme.value === 'dark'
+  const cardOpacity = Number(previewBackgroundSettings.value.cardOpacity) || 0
   const cardRadius = Number(previewBackgroundSettings.value.cardRadius) || 0
+  const tabRadius = Number(previewBackgroundSettings.value.tabRadius) || 0
   const thumbRadius = Math.max(0, cardRadius - 2)
+  const tabItemRadius = Math.max(0, tabRadius - 2)
+  const bookmarkCardRgb = isDark ? '28 28 30' : '255 255 255'
+  const folderStartRgb = isDark ? '44 44 46' : '239 246 255'
+  const folderEndRgb = isDark ? '28 28 30' : '255 255 255'
+  const folderStartOpacity = Math.max(0, Math.min(1, cardOpacity - 0.05))
+  const folderEndOpacity = Math.max(0, Math.min(1, cardOpacity - 0.02))
 
   return {
     '--bookmark-card-radius': `${cardRadius}px`,
-    '--bookmark-thumb-radius': `${thumbRadius}px`
+    '--bookmark-thumb-radius': `${thumbRadius}px`,
+    '--bookmark-card-bg': `rgb(${bookmarkCardRgb} / ${cardOpacity})`,
+    '--folder-card-bg': `linear-gradient(180deg, rgb(${folderStartRgb} / ${folderStartOpacity}) 0%, rgb(${folderEndRgb} / ${folderEndOpacity}) 100%)`,
+    '--bookmark-card-backdrop-filter': 'none',
+    '--tab-shell-radius': `${tabRadius}px`,
+    '--tab-item-radius': `${tabItemRadius}px`
   }
 })
 
@@ -381,6 +401,39 @@ const initActiveTab = () => {
   activeTab.value = localStorage.getItem(ACTIVE_TAB_KEY) || ''
 }
 
+const initMotionPreferences = () => {
+  if (typeof window === 'undefined' || typeof window.matchMedia !== 'function') {
+    canAnimate = true
+    motionMatcher = null
+    return
+  }
+
+  const mediaQuery = window.matchMedia('(prefers-reduced-motion: reduce)')
+  const updateMotionPreference = () => {
+    canAnimate = !mediaQuery.matches
+  }
+
+  updateMotionPreference()
+
+  if (typeof mediaQuery.addEventListener === 'function') {
+    mediaQuery.addEventListener('change', updateMotionPreference)
+    motionMatcher = {
+      revert() {
+        mediaQuery.removeEventListener('change', updateMotionPreference)
+      }
+    }
+    return
+  }
+
+  motionMatcher = {
+    revert() {
+      mediaQuery.removeListener?.(updateMotionPreference)
+    }
+  }
+
+  mediaQuery.addListener?.(updateMotionPreference)
+}
+
 const toggleCardLayout = () => {
   cardLayout.value = cardLayout.value === 'media-left' ? 'stacked' : 'media-left'
   localStorage.setItem(CARD_LAYOUT_KEY, cardLayout.value)
@@ -454,14 +507,65 @@ const resetHoverSurface = (element) => {
 }
 
 const getTabBaseVars = (element) => ({
-  backgroundColor: element?.classList.contains('tab-btn-active') ? getRootCssVar('--tab-active-bg') : 'transparent',
-  boxShadow: element?.classList.contains('tab-btn-active') ? getRootCssVar('--tab-active-shadow') : '0 0 0 rgba(0, 0, 0, 0)',
-  color: element?.classList.contains('tab-btn-active') ? getRootCssVar('--topbar-title') : getRootCssVar('--muted')
+  backgroundColor: 'transparent',
+  boxShadow: '0 0 0 rgba(0, 0, 0, 0)',
+  color: element?.classList.contains('tab-btn-active') ? getRootCssVar('--topbar-title') : getRootCssVar('--bookmark-host-color')
 })
+
+const resetTabHighlightAnimationState = () => {
+  tabHighlightTimeline?.kill()
+  tabHighlightTimeline = null
+  if (tabHighlightRef.value) {
+    gsap.killTweensOf(tabHighlightRef.value)
+  }
+}
+
+const updateTabHighlight = ({ immediate = false } = {}) => {
+  const tabs = tabsRef.value
+  const highlight = tabHighlightRef.value
+  const activeButton = tabs?.querySelector?.('.tab-btn-active')
+
+  resetTabHighlightAnimationState()
+
+  if (!tabs || !highlight || !activeButton) {
+    if (highlight) {
+      gsap.set(highlight, {
+        autoAlpha: 0,
+        clearProps: 'transform,width,height'
+      })
+    }
+    return
+  }
+
+  const tabsRect = tabs.getBoundingClientRect()
+  const buttonRect = activeButton.getBoundingClientRect()
+  const nextState = {
+    x: buttonRect.left - tabsRect.left + tabs.scrollLeft,
+    y: buttonRect.top - tabsRect.top + tabs.scrollTop,
+    width: buttonRect.width,
+    height: buttonRect.height,
+    autoAlpha: 1
+  }
+
+  if (immediate || !canAnimate || loading.value || !hasPlayedInitialIntro) {
+    gsap.set(highlight, nextState)
+    return
+  }
+
+  tabHighlightTimeline = gsap.to(highlight, {
+    ...nextState,
+    duration: 0.26,
+    ease: 'power3.out',
+    onComplete: () => {
+      tabHighlightTimeline = null
+    }
+  })
+}
 
 const syncTabButtonStates = () => {
   const buttons = tabsRef.value ? Array.from(tabsRef.value.querySelectorAll('.tab-btn')) : []
   if (!buttons.length) {
+    updateTabHighlight({ immediate: true })
     return
   }
 
@@ -614,6 +718,82 @@ const resetBookmarkAnimationState = () => {
   clearAnimationTargets(getVisibleBookmarkTargets())
 }
 
+const resetDirectorySwitchAnimationState = () => {
+  directorySwitchTimeline?.kill()
+  directorySwitchTimeline = null
+  const target = directoryViewRef.value
+  if (target) {
+    gsap.killTweensOf(target)
+  }
+  clearAnimationTargets([target].filter(Boolean))
+}
+
+const shouldAnimateDirectorySwitch = () =>
+  canAnimate && !loading.value && !isDragUpdating && hasPlayedInitialIntro
+
+const animateDirectorySwitchOut = () =>
+  new Promise((resolve) => {
+    const target = directoryViewRef.value
+
+    resetDirectorySwitchAnimationState()
+
+    if (!target || !shouldAnimateDirectorySwitch()) {
+      resolve()
+      return
+    }
+
+    directorySwitchTimeline = gsap.timeline({
+      defaults: {
+        duration: 0.16,
+        ease: 'power2.in'
+      },
+      onComplete: () => {
+        directorySwitchTimeline = null
+        resolve()
+      }
+    })
+
+    directorySwitchTimeline.to(target, {
+      autoAlpha: 0,
+      y: 14,
+      scale: 0.992,
+      transformOrigin: '50% 0%',
+      force3D: true
+    })
+  })
+
+const animateDirectorySwitchIn = () => {
+  const target = directoryViewRef.value
+
+  resetDirectorySwitchAnimationState()
+
+  if (!target || !shouldAnimateDirectorySwitch()) {
+    return
+  }
+
+  gsap.fromTo(
+    target,
+    {
+      autoAlpha: 0,
+      y: 18,
+      scale: 0.992,
+      transformOrigin: '50% 0%',
+      force3D: true
+    },
+    {
+      autoAlpha: 1,
+      y: 0,
+      scale: 1,
+      duration: 0.28,
+      ease: 'power3.out',
+      clearProps: 'transform,opacity,visibility',
+      onComplete: () => {
+        directorySwitchTimeline = null
+      }
+    }
+  )
+}
+
 const resetIntroAnimationState = () => {
   pageIntroTimeline?.kill()
   pageIntroTimeline = null
@@ -691,8 +871,11 @@ const scheduleInitialIntro = () => {
     }
 
     hasPlayedInitialIntro = true
+    resetIntroAnimationState()
+    resetBookmarkAnimationState()
+    resetDirectorySwitchAnimationState()
     nextTick(syncTabButtonStates)
-    playPageIntro()
+    nextTick(() => updateTabHighlight({ immediate: true }))
   })
 }
 
@@ -907,8 +1090,45 @@ const syncStatusForMode = () => {
 }
 
 const switchTab = (tabId) => {
-  activeTab.value = tabId
-  localStorage.setItem(ACTIVE_TAB_KEY, tabId)
+  if (!tabId) {
+    return
+  }
+
+  if (isTabSwitchAnimating) {
+    pendingTabSwitchId = tabId
+    return
+  }
+
+  if (tabId === activeTab.value) {
+    return
+  }
+
+  const commitSwitch = () => {
+    activeTab.value = tabId
+    localStorage.setItem(ACTIVE_TAB_KEY, tabId)
+  }
+
+  if (!shouldAnimateDirectorySwitch()) {
+    commitSwitch()
+    return
+  }
+
+  isTabSwitchAnimating = true
+
+  animateDirectorySwitchOut()
+    .then(async () => {
+      commitSwitch()
+      await nextTick()
+      animateDirectorySwitchIn()
+    })
+    .finally(() => {
+      isTabSwitchAnimating = false
+      const nextTabId = pendingTabSwitchId
+      pendingTabSwitchId = ''
+      if (nextTabId && nextTabId !== activeTab.value) {
+        switchTab(nextTabId)
+      }
+    })
 }
 
 const loadBookmarks = async () => {
@@ -1335,6 +1555,19 @@ const openContextMenu = (node, point) => {
   nextTick(animateContextMenu)
 }
 
+const openTabContextMenu = (tabId, event) => {
+  if (!tabId || tabId === ROOT_BOOKMARKS_TAB_ID) {
+    return
+  }
+
+  const node = findNodeById(bookmarkTree.value, tabId)
+  if (!node) {
+    return
+  }
+
+  openContextMenu(node, { x: event.clientX, y: event.clientY })
+}
+
 const closeContextMenu = () => {
   if (!contextMenu.value.visible) {
     return
@@ -1366,6 +1599,7 @@ watch(tabOptions, (tabs) => {
   if (!tabs.length) {
     activeTab.value = ''
     localStorage.removeItem(ACTIVE_TAB_KEY)
+    nextTick(() => updateTabHighlight({ immediate: true }))
     return
   }
 
@@ -1375,6 +1609,8 @@ watch(tabOptions, (tabs) => {
     activeTab.value = tabs.some((tab) => tab.id === savedTabId) ? savedTabId : tabs[0].id
     localStorage.setItem(ACTIVE_TAB_KEY, activeTab.value)
   }
+
+  nextTick(() => updateTabHighlight({ immediate: true }))
 })
 
 watch(activeTab, (nextTab, previousTab) => {
@@ -1390,12 +1626,28 @@ watch(activeTab, (nextTab, previousTab) => {
   }
 
   nextTick(syncTabButtonStates)
+  nextTick(() => updateTabHighlight())
   queueBookmarkAnimation()
 })
 
 watch(theme, () => {
   nextTick(syncTabButtonStates)
+  nextTick(() => updateTabHighlight({ immediate: true }))
 })
+
+watch(
+  () => previewBackgroundSettings.value.tabRadius,
+  () => {
+    nextTick(() => updateTabHighlight({ immediate: true }))
+  }
+)
+
+watch(
+  () => warning.value,
+  () => {
+    nextTick(() => updateTabHighlight({ immediate: true }))
+  }
+)
 
 watch(
   () => visibleNodes.value,
@@ -1423,6 +1675,7 @@ watch(loading, (isLoading, wasLoading) => {
 })
 
 onMounted(() => {
+  initMotionPreferences()
   initTheme()
   initMinimalMode()
   initCardLayout()
@@ -1431,6 +1684,7 @@ onMounted(() => {
   void loadBookmarks()
 
   window.addEventListener('resize', closeContextMenu)
+  window.addEventListener('resize', updateTabHighlight)
   window.addEventListener('scroll', closeContextMenu, true)
 })
 
@@ -1438,12 +1692,15 @@ onUnmounted(() => {
   motionMatcher?.revert()
   pageIntroTimeline?.kill()
   bookmarksTimeline?.kill()
+  directorySwitchTimeline?.kill()
+  tabHighlightTimeline?.kill()
   themeToggleTimeline?.kill()
   const hoverTargets = pageShellRef.value?.querySelectorAll?.('.tab-btn, .theme-switch, .modal-close, .context-menu-item')
   if (hoverTargets?.length) {
     gsap.killTweensOf(Array.from(hoverTargets))
   }
   window.removeEventListener('resize', closeContextMenu)
+  window.removeEventListener('resize', updateTabHighlight)
   window.removeEventListener('scroll', closeContextMenu, true)
 })
 </script>
@@ -1460,6 +1717,7 @@ onUnmounted(() => {
     <div ref="contentRef" class="content" :class="{ 'content-with-background': hasBackgroundImage }" :style="contentStyle">
       <header ref="topbarRef" class="topbar">
         <nav ref="tabsRef" class="tabs" aria-label="书签分类">
+          <span ref="tabHighlightRef" class="tab-highlight" aria-hidden="true"></span>
           <button
             v-for="tab in tabOptions"
             :key="tab.id"
@@ -1471,6 +1729,7 @@ onUnmounted(() => {
             type="button"
             :data-folder-tab-id="tab.id === ROOT_BOOKMARKS_TAB_ID ? null : tab.id"
             @click="switchTab(tab.id)"
+            @contextmenu.prevent.stop="openTabContextMenu(tab.id, $event)"
             @dragover="handleTabDragOver(tab.id, $event)"
             @drop="handleTabDrop(tab.id, $event)"
           >
@@ -1520,23 +1779,25 @@ onUnmounted(() => {
 
       <p v-if="warning" class="warning">{{ warning }}</p>
 
-      <div v-if="!loading && visibleNodes.length" ref="modulesRef" class="modules">
-        <BookmarkGroup
-          :nodes="visibleNodes"
-          :parent-id="visibleParentId"
-          :depth="0"
-          :minimal-mode="minimalMode"
-          :card-layout="cardLayout"
-          :active-drop-folder-id="activeDropFolderId"
-          :can-move="canMoveNode"
-          @drag-end="handleDragEnd"
-          @drag-target-change="handleFolderDragTargetChange"
-          @open-bookmark="openBookmarkUrl"
-          @open-context-menu="openContextMenu"
-        />
-      </div>
+      <div v-if="!loading" ref="directoryViewRef" class="directory-view">
+        <div v-if="visibleNodes.length" ref="modulesRef" class="modules">
+          <BookmarkGroup
+            :nodes="visibleNodes"
+            :parent-id="visibleParentId"
+            :depth="0"
+            :minimal-mode="minimalMode"
+            :card-layout="cardLayout"
+            :active-drop-folder-id="activeDropFolderId"
+            :can-move="canMoveNode"
+            @drag-end="handleDragEnd"
+            @drag-target-change="handleFolderDragTargetChange"
+            @open-bookmark="openBookmarkUrl"
+            @open-context-menu="openContextMenu"
+          />
+        </div>
 
-      <p v-else-if="!loading" class="empty">暂无书签，请先在 Chrome 中添加内容。</p>
+        <p v-else class="empty">暂无书签，请先在 Chrome 中添加内容。</p>
+      </div>
     </div>
 
     <div v-if="backgroundSettingsOpen" class="modal-overlay modal-overlay-clear" @click.self="closeBackgroundSettings">
@@ -1552,7 +1813,7 @@ onUnmounted(() => {
           </button>
         </div>
 
-        <p class="modal-meta">支持背景图、本地上传和书签卡片圆角调节，保存后会持久化到本地。</p>
+        <p class="modal-meta">支持背景图、本地上传和书签卡片透明度、磨砂、圆角调节，保存后会持久化到本地。</p>
 
         <div class="background-settings-layout">
           <section class="background-settings-panel">
@@ -1601,15 +1862,30 @@ onUnmounted(() => {
 
           <section class="background-settings-panel background-settings-panel-controls">
             <div class="settings-panel-header">
-              <h4 class="settings-panel-title">卡片样式</h4>
-              <p class="settings-panel-meta">单独调整书签卡片圆角。</p>
+              <h4 class="settings-panel-title">样式调整</h4>
             </div>
+
+            <label class="modal-field modal-field-range">
+              <span>卡片透明度</span>
+              <div class="range-row">
+                <input v-model.number="backgroundDraft.cardOpacity" type="range" min="0.2" max="1" step="0.01" />
+                <strong>{{ Math.round(backgroundDraft.cardOpacity * 100) }}%</strong>
+              </div>
+            </label>
 
             <label class="modal-field modal-field-range">
               <span>卡片圆角</span>
               <div class="range-row">
                 <input v-model.number="backgroundDraft.cardRadius" type="range" min="0" max="28" step="1" />
                 <strong>{{ Math.round(backgroundDraft.cardRadius) }}px</strong>
+              </div>
+            </label>
+
+            <label class="modal-field modal-field-range">
+              <span>目录圆角</span>
+              <div class="range-row">
+                <input v-model.number="backgroundDraft.tabRadius" type="range" min="0" max="28" step="1" />
+                <strong>{{ Math.round(backgroundDraft.tabRadius) }}px</strong>
               </div>
             </label>
           </section>

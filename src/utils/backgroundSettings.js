@@ -16,7 +16,10 @@ export const createDefaultBackgroundSettings = () => ({
   imageUrl: '',
   opacity: 0.72,
   backdropBlur: 6,
+  cardOpacity: 1,
+  cardBlur: 0,
   cardRadius: 12,
+  tabRadius: 10,
   position: 'center center',
   size: 'cover',
   repeat: 'no-repeat'
@@ -146,7 +149,9 @@ export const normalizeBackgroundSettings = (value = {}) => {
   const enabled = value.enabled === undefined ? Boolean(imageUrl) : Boolean(value.enabled)
   const opacity = Number(value.opacity)
   const backdropBlur = Number(value.backdropBlur)
+  const cardOpacity = Number(value.cardOpacity)
   const cardRadius = Number(value.cardRadius)
+  const tabRadius = Number(value.tabRadius ?? value.cardRadius)
   const size = ['cover', 'contain', 'auto'].includes(value.size) ? value.size : fallback.size
   const repeat = ['no-repeat', 'repeat', 'repeat-x', 'repeat-y'].includes(value.repeat)
     ? value.repeat
@@ -157,7 +162,10 @@ export const normalizeBackgroundSettings = (value = {}) => {
     imageUrl,
     opacity: Number.isFinite(opacity) ? clamp(opacity, 0.2, 1) : fallback.opacity,
     backdropBlur: Number.isFinite(backdropBlur) ? clamp(backdropBlur, 0, 24) : fallback.backdropBlur,
+    cardOpacity: Number.isFinite(cardOpacity) ? clamp(cardOpacity, 0.2, 1) : fallback.cardOpacity,
+    cardBlur: fallback.cardBlur,
     cardRadius: Number.isFinite(cardRadius) ? clamp(cardRadius, 0, 28) : fallback.cardRadius,
+    tabRadius: Number.isFinite(tabRadius) ? clamp(tabRadius, 0, 28) : fallback.tabRadius,
     position: toTrimmedString(value.position) || fallback.position,
     size,
     repeat

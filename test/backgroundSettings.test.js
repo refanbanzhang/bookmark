@@ -44,7 +44,10 @@ test('normalizes background settings and keeps image-enabled state', () => {
     imageUrl: '  https://example.com/bg.jpg  ',
     opacity: 2,
     backdropBlur: 30,
+    cardOpacity: 2,
+    cardBlur: 99,
     cardRadius: 99,
+    tabRadius: 99,
     size: 'contain',
     repeat: 'repeat-x'
   })
@@ -54,7 +57,10 @@ test('normalizes background settings and keeps image-enabled state', () => {
     imageUrl: 'https://example.com/bg.jpg',
     opacity: 1,
     backdropBlur: 24,
+    cardOpacity: 1,
+    cardBlur: 0,
     cardRadius: 28,
+    tabRadius: 28,
     position: 'center center',
     size: 'contain',
     repeat: 'repeat-x'
@@ -71,6 +77,14 @@ test('respects explicit disabled state when image url exists', () => {
   assert.equal(settings.imageUrl, 'https://example.com/bg.jpg')
 })
 
+test('falls back to card radius for legacy directory radius settings', () => {
+  const settings = normalizeBackgroundSettings({
+    cardRadius: 18
+  })
+
+  assert.equal(settings.tabRadius, 18)
+})
+
 test('loads defaults for missing or invalid data', async () => {
   const storage = createMemoryStorage({
     [BACKGROUND_SETTINGS_KEY]: '{"imageUrl":123,"opacity":"oops"}'
@@ -81,7 +95,10 @@ test('loads defaults for missing or invalid data', async () => {
     imageUrl: '',
     opacity: 0.72,
     backdropBlur: 6,
+    cardOpacity: 1,
+    cardBlur: 0,
     cardRadius: 12,
+    tabRadius: 10,
     position: 'center center',
     size: 'cover',
     repeat: 'no-repeat'
