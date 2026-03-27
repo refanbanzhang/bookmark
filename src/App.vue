@@ -11,6 +11,7 @@ import {
   pruneNodesByIds,
   renameNodeInTree
 } from './utils/bookmarkTree'
+import { isFolderCenterDrop } from './utils/folderDropZone'
 import {
   clearBackgroundSettings,
   createDefaultBackgroundSettings,
@@ -45,6 +46,8 @@ const editingNode = ref(null)
 const editingTitle = ref('')
 const editError = ref('')
 const editInput = ref(null)
+const activeDropFolderId = ref('')
+const activeDropTabId = ref('')
 const deletingNode = ref(null)
 const contextMenu = ref({
   visible: false,
@@ -1132,49 +1135,100 @@ const canMoveNode = (draggedId, targetParentId) => {
   return !nodeContainsId(sourceNode, targetParentId)
 }
 
-const handleDragEnd = async (event) => {
-  closeContextMenu()
+const isBookmarkDragActive = () =>
+  typeof document !== 'undefined' && document.documentElement.dataset.bookmarkDragging === 'true'
 
-  if (!event || !event.item) {
-    return
+const clearDragDropTargets = () => {
+  activeDropFolderId.value = ''
+  activeDropTabId.value = ''
+}
+
+const setActiveDropFolder = (folderId) => {
+  activeDropFolderId.value = folderId ? String(folderId) : ''
+  if (activeDropFolderId.value) {
+    activeDropTabId.value = ''
+  }
+}
+
+const setActiveDropTab = (tabId) => {
+  activeDropTabId.value = tabId ? String(tabId) : ''
+  if (activeDropTabId.value) {
+    activeDropFolderId.value = ''
+  }
+}
+
+const getClientPoint = (event) => {
+  const source = event?.touches?.[0] || event?.changedTouches?.[0] || event
+  const clientX = Number(source?.clientX)
+  const clientY = Number(source?.clientY)
+  if (!Number.isFinite(clientX) || !Number.isFinite(clientY)) {
+    return null
   }
 
-  if (event.from === event.to && event.oldIndex === event.newIndex) {
-    return
+  return { clientX, clientY }
+}
+
+const resolveExternalDropFolderId = (event) => {
+  const point = getClientPoint(event?.originalEvent)
+  if (!point || typeof document === 'undefined') {
+    return activeDropTabId.value || activeDropFolderId.value || null
   }
 
-  const targetId = String(event.item.dataset.nodeId || '')
-  if (!targetId) {
-    return
+  const element = document.elementFromPoint(point.clientX, point.clientY)
+  const tabButton = element?.closest?.('[data-folder-tab-id]')
+  const tabFolderId = String(tabButton?.dataset.folderTabId || '')
+  if (tabFolderId && tabFolderId !== ROOT_BOOKMARKS_TAB_ID) {
+    return tabFolderId
   }
 
-  const targetParentId = normalizeParentId(event.to?.dataset.groupParentId || null)
-  const nextIndex = Number.isInteger(event.newDraggableIndex) ? event.newDraggableIndex : event.newIndex
-  if (!Number.isInteger(nextIndex) || nextIndex < 0) {
-    return
+  const folderItem = element?.closest?.('.bookmark-item.is-folder')
+  const folderId = String(folderItem?.dataset.nodeId || '')
+  const folderCard = folderItem?.querySelector?.('.bookmark-row.folder > .bookmark-content')
+  if (!folderId || !folderCard) {
+    return activeDropTabId.value || activeDropFolderId.value || null
   }
 
+  const rect = folderCard.getBoundingClientRect()
+  const inCenter = isFolderCenterDrop({
+    clientX: point.clientX,
+    clientY: point.clientY,
+    rectLeft: rect.left,
+    rectTop: rect.top,
+    rectWidth: rect.width,
+    rectHeight: rect.height,
+    isCurrentTarget: activeDropFolderId.value === folderId
+  })
+
+  return inCenter ? folderId : activeDropTabId.value || activeDropFolderId.value || null
+}
+
+const getFolderAppendIndex = (folderId) => {
+  const folder = findNodeById(bookmarkTree.value, folderId)
+  return Array.isArray(folder?.children) ? folder.children.length : 0
+}
+
+const applyNodeMove = async ({ targetId, targetParentId, targetIndex, chromeIndex, successStatus, demoWarning }) => {
   isDragUpdating = true
   try {
-    bookmarkTree.value = moveNodeToFinalIndexInTree(bookmarkTree.value, targetId, targetParentId, nextIndex)
+    bookmarkTree.value = moveNodeToFinalIndexInTree(bookmarkTree.value, targetId, targetParentId, targetIndex)
     await nextTick()
 
     try {
       if (hasChromeBookmarks()) {
         const ops = getChromeNodeOps()
-        const chromeMoveIndex = getChromeMoveIndex(event)
-        if (!Number.isInteger(chromeMoveIndex) || chromeMoveIndex < 0) {
+        const nextChromeIndex = Number.isInteger(chromeIndex) ? chromeIndex : targetIndex
+        if (!Number.isInteger(nextChromeIndex) || nextChromeIndex < 0) {
           return
         }
         await ops.move(targetId, {
           parentId: getChromeMoveParentId(targetParentId, chromeRootFolderId.value),
-          index: chromeMoveIndex
+          index: nextChromeIndex
         })
         await loadBookmarks()
       }
 
-      status.value = '已更新书签顺序。'
-      warning.value = hasChromeBookmarks() ? '' : '当前为演示数据，拖拽排序仅在页面内生效。'
+      status.value = successStatus
+      warning.value = hasChromeBookmarks() ? '' : demoWarning
     } catch (error) {
       console.error('drag sync failed', error)
       status.value = '同步拖拽结果失败。'
@@ -1183,7 +1237,89 @@ const handleDragEnd = async (event) => {
     }
   } finally {
     isDragUpdating = false
+    clearDragDropTargets()
   }
+}
+
+const handleFolderDragTargetChange = (folderId) => {
+  if (!isBookmarkDragActive()) {
+    clearDragDropTargets()
+    return
+  }
+  setActiveDropFolder(folderId)
+}
+
+const handleTabDragOver = (tabId, event) => {
+  if (!isBookmarkDragActive() || tabId === ROOT_BOOKMARKS_TAB_ID) {
+    return
+  }
+  event.preventDefault()
+  setActiveDropTab(tabId)
+}
+
+const handleTabDrop = (tabId, event) => {
+  if (!isBookmarkDragActive() || tabId === ROOT_BOOKMARKS_TAB_ID) {
+    return
+  }
+  event.preventDefault()
+  setActiveDropTab(tabId)
+}
+
+const handleDragEnd = async (event) => {
+  closeContextMenu()
+
+  if (!event || !event.item) {
+    clearDragDropTargets()
+    return
+  }
+
+  const targetId = String(event.item.dataset.nodeId || '')
+  if (!targetId) {
+    clearDragDropTargets()
+    return
+  }
+
+  const sourceLocation = getNodeLocation(bookmarkTree.value, targetId)
+  const externalTargetFolderId = resolveExternalDropFolderId(event)
+  if (externalTargetFolderId && canMoveNode(targetId, externalTargetFolderId)) {
+    const sourceParentId = normalizeParentId(sourceLocation?.parentId)
+    if (sourceParentId !== normalizeParentId(externalTargetFolderId)) {
+      const targetFolder = findNodeById(bookmarkTree.value, externalTargetFolderId)
+      const targetFolderTitle = targetFolder?.title || '未命名目录'
+      const appendIndex = getFolderAppendIndex(externalTargetFolderId)
+
+      await applyNodeMove({
+        targetId,
+        targetParentId: externalTargetFolderId,
+        targetIndex: appendIndex,
+        chromeIndex: appendIndex,
+        successStatus: `已移动到目录「${targetFolderTitle}」。`,
+        demoWarning: '当前为演示数据，移动仅在页面内生效。'
+      })
+      return
+    }
+  }
+
+  if (event.from === event.to && event.oldIndex === event.newIndex) {
+    clearDragDropTargets()
+    return
+  }
+
+  const targetParentId = normalizeParentId(event.to?.dataset.groupParentId || null)
+  const nextIndex = Number.isInteger(event.newDraggableIndex) ? event.newDraggableIndex : event.newIndex
+  if (!Number.isInteger(nextIndex) || nextIndex < 0) {
+    clearDragDropTargets()
+    return
+  }
+
+  await applyNodeMove({
+    targetId,
+    targetParentId,
+    targetIndex: nextIndex,
+    chromeIndex: getChromeMoveIndex(event),
+    successStatus: '已更新书签顺序。',
+    demoWarning: '当前为演示数据，拖拽排序仅在页面内生效。'
+  })
 }
 
 const openContextMenu = (node, point) => {
@@ -1328,9 +1464,15 @@ onUnmounted(() => {
             v-for="tab in tabOptions"
             :key="tab.id"
             class="tab-btn"
-            :class="{ 'tab-btn-active': activeTab === tab.id }"
+            :class="{
+              'tab-btn-active': activeTab === tab.id,
+              'tab-btn-drop-target': activeDropTabId === tab.id
+            }"
             type="button"
+            :data-folder-tab-id="tab.id === ROOT_BOOKMARKS_TAB_ID ? null : tab.id"
             @click="switchTab(tab.id)"
+            @dragover="handleTabDragOver(tab.id, $event)"
+            @drop="handleTabDrop(tab.id, $event)"
           >
             {{ tab.label }}
           </button>
@@ -1385,8 +1527,10 @@ onUnmounted(() => {
           :depth="0"
           :minimal-mode="minimalMode"
           :card-layout="cardLayout"
+          :active-drop-folder-id="activeDropFolderId"
           :can-move="canMoveNode"
           @drag-end="handleDragEnd"
+          @drag-target-change="handleFolderDragTargetChange"
           @open-bookmark="openBookmarkUrl"
           @open-context-menu="openContextMenu"
         />

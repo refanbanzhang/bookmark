@@ -272,6 +272,14 @@ body {
   box-shadow: var(--tab-active-shadow);
 }
 
+.tab-btn-drop-target {
+  color: var(--topbar-title);
+  background: color-mix(in srgb, var(--accent) 12%, var(--tab-active-bg));
+  box-shadow:
+    0 0 0 1px color-mix(in srgb, var(--accent) 30%, transparent),
+    0 8px 18px rgba(37, 99, 235, 0.16);
+}
+
 .topbar-actions {
   display: flex;
   align-items: center;

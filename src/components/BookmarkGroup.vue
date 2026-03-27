@@ -3,6 +3,7 @@ import { computed, onUnmounted, ref, watch } from 'vue'
 import { gsap } from 'gsap'
 import { VueDraggable } from 'vue-draggable-plus'
 import { getThumbnailForUrl } from '../utils/thumbnailCache'
+import { isFolderCenterDrop } from '../utils/folderDropZone'
 
 defineOptions({ name: 'BookmarkGroup' })
 
@@ -27,6 +28,10 @@ const props = defineProps({
     type: String,
     default: 'stacked'
   },
+  activeDropFolderId: {
+    type: [String, Number],
+    default: ''
+  },
   canMove: {
     type: Function,
     default: null
@@ -35,6 +40,7 @@ const props = defineProps({
 
 const emit = defineEmits([
   'drag-end',
+  'drag-target-change',
   'open-bookmark',
   'open-context-menu'
 ])
@@ -104,13 +110,70 @@ const onContentAuxClick = (node, event) => {
   emit('open-bookmark', node.url, { background: true })
 }
 
-const onMove = (event) => {
+const getClientPoint = (event) => {
+  const source = event?.touches?.[0] || event?.changedTouches?.[0] || event
+  const clientX = Number(source?.clientX)
+  const clientY = Number(source?.clientY)
+  if (!Number.isFinite(clientX) || !Number.isFinite(clientY)) {
+    return null
+  }
+
+  return { clientX, clientY }
+}
+
+const getFolderCenterTargetId = (originalEvent, draggedId) => {
+  const point = getClientPoint(originalEvent)
+  if (!point || typeof document === 'undefined') {
+    return null
+  }
+
+  const hoveredElement = document.elementFromPoint(point.clientX, point.clientY)
+  const folderItem = hoveredElement?.closest?.('.bookmark-item.is-folder')
+  const folderId = String(folderItem?.dataset.nodeId || '')
+  if (!folderId || folderId === String(draggedId)) {
+    return null
+  }
+
+  const folderCard = folderItem.querySelector('.bookmark-row.folder > .bookmark-content')
+  if (!folderCard) {
+    return null
+  }
+
+  const rect = folderCard.getBoundingClientRect()
+  const inCenter = isFolderCenterDrop({
+    clientX: point.clientX,
+    clientY: point.clientY,
+    rectLeft: rect.left,
+    rectTop: rect.top,
+    rectWidth: rect.width,
+    rectHeight: rect.height,
+    isCurrentTarget: String(props.activeDropFolderId || '') === folderId
+  })
+
+  return inCenter ? folderId : null
+}
+
+const onMove = (event, originalEvent) => {
   const draggedId = String(event.dragged?.dataset.nodeId || '')
   const targetParentId = event.to?.dataset.groupParentId || ''
   if (!draggedId || !props.canMove) {
+    emit('drag-target-change', null)
     return true
   }
-  return props.canMove(draggedId, targetParentId || null)
+
+  if (!props.canMove(draggedId, targetParentId || null)) {
+    emit('drag-target-change', null)
+    return false
+  }
+
+  const folderTargetId = getFolderCenterTargetId(originalEvent, draggedId)
+  if (folderTargetId && props.canMove(draggedId, folderTargetId)) {
+    emit('drag-target-change', folderTargetId)
+    return false
+  }
+
+  emit('drag-target-change', null)
+  return true
 }
 
 const getGlobalDragCount = () => {
@@ -148,6 +211,7 @@ const onDragStart = () => {
     isLocalDragging.value = true
     setGlobalDragCount(getGlobalDragCount() + 1)
   }
+  emit('drag-target-change', null)
   clearHoverAnimationTargets()
 }
 
@@ -156,6 +220,7 @@ const onDragEnd = (event) => {
     isLocalDragging.value = false
     setGlobalDragCount(getGlobalDragCount() - 1)
   }
+  emit('drag-target-change', null)
   clearHoverAnimationTargets()
   emit('drag-end', event)
 }
@@ -318,6 +383,7 @@ onUnmounted(() => {
   gsap.killTweensOf(Array.from(targets))
 })
 
+const forwardDragTargetChange = (folderId) => emit('drag-target-change', folderId)
 const forwardOpenContextMenu = (node, point) => emit('open-context-menu', node, point)
 const forwardOpenBookmark = (url, options) => emit('open-bookmark', url, options)
 const forwardDragEnd = (event) => emit('drag-end', event)
@@ -367,8 +433,10 @@ const forwardDragEnd = (event) => emit('drag-end', event)
             :depth="depth + 1"
             :minimal-mode="minimalMode"
             :card-layout="cardLayout"
+            :active-drop-folder-id="activeDropFolderId"
             :can-move="canMove"
             @drag-end="forwardDragEnd"
+            @drag-target-change="forwardDragTargetChange"
             @open-bookmark="forwardOpenBookmark"
             @open-context-menu="forwardOpenContextMenu"
           />
@@ -380,7 +448,8 @@ const forwardDragEnd = (event) => emit('drag-end', event)
           class="bookmark-content drag-handle"
           :class="{
             'is-minimal': minimalMode,
-            'is-media-left': !minimalMode && cardLayout === 'media-left'
+            'is-media-left': !minimalMode && cardLayout === 'media-left',
+            'is-drop-target': hasChildren(node) && String(activeDropFolderId || '') === String(node.id)
           }"
           @click="onContentClick(node, $event)"
           @auxclick="onContentAuxClick(node, $event)"
@@ -432,15 +501,17 @@ const forwardDragEnd = (event) => emit('drag-end', event)
         </div>
       </div>
 
-      <BookmarkGroup
+        <BookmarkGroup
         v-if="!isRootFolder(node) && hasChildren(node)"
         :nodes="node.children"
         :parent-id="node.id"
         :depth="depth + 1"
         :minimal-mode="minimalMode"
         :card-layout="cardLayout"
+        :active-drop-folder-id="activeDropFolderId"
         :can-move="canMove"
         @drag-end="forwardDragEnd"
+        @drag-target-change="forwardDragTargetChange"
         @open-bookmark="forwardOpenBookmark"
         @open-context-menu="forwardOpenContextMenu"
       />
@@ -552,6 +623,13 @@ const forwardDragEnd = (event) => emit('drag-end', event)
 .bookmark-row.folder .bookmark-content {
   background: var(--folder-card-bg);
   border-color: var(--folder-card-border);
+}
+
+.bookmark-row.folder .bookmark-content.is-drop-target {
+  border-color: color-mix(in srgb, var(--accent) 58%, white);
+  box-shadow:
+    0 0 0 2px color-mix(in srgb, var(--accent) 18%, transparent),
+    0 16px 36px rgba(37, 99, 235, 0.16);
 }
 
 .bookmark-row.folder .bookmark-content.is-minimal {

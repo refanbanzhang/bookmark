@@ -64,6 +64,18 @@ test('moveNodeToFinalIndexInTree places node at final same-parent index', () => 
   )
 })
 
+test('moveNodeToFinalIndexInTree can append bookmark into another folder', () => {
+  const moved = moveNodeToFinalIndexInTree(makeTree(), 'b2', 'b3', 2)
+  assert.deepEqual(
+    moved[0].children.map((node) => node.id),
+    ['b1', 'b3']
+  )
+  assert.deepEqual(
+    moved[0].children.find((node) => node.id === 'b3').children.map((node) => node.id),
+    ['b3-1', 'b3-2', 'b2']
+  )
+})
+
 test('swapNodesInTree swaps two siblings without shifting others', () => {
   const swapped = swapNodesInTree(makeTree(), 'b1', 'b3')
   assert.deepEqual(
