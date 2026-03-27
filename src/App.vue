@@ -41,6 +41,8 @@ const themeSwitchIconRef = ref(null)
 const backgroundSettings = ref(createDefaultBackgroundSettings())
 const backgroundDraft = ref(createDefaultBackgroundSettings())
 const backgroundSettingsOpen = ref(false)
+const animationEnabled = ref(true)
+const bookmarkMotionEnabled = ref(false)
 const backgroundError = ref('')
 const backgroundFileInput = ref(null)
 const chromeRootFolderId = ref('1')
@@ -62,6 +64,7 @@ const THEME_KEY = 'bookmark-theme'
 const MINIMAL_MODE_KEY = 'bookmark-minimal-mode'
 const CARD_LAYOUT_KEY = 'bookmark-card-layout'
 const ACTIVE_TAB_KEY = 'bookmark-active-tab'
+const ANIMATION_ENABLED_KEY = 'bookmark-animation-enabled'
 const MAX_ANIMATED_BOOKMARKS = 24
 const ROOT_BOOKMARKS_TAB_ID = '__root_bookmarks__'
 
@@ -71,6 +74,7 @@ let directorySwitchTimeline = null
 let tabHighlightTimeline = null
 let themeToggleTimeline = null
 let motionMatcher = null
+let systemAllowsMotion = true
 let canAnimate = false
 let bookmarkAnimationQueued = false
 let isDragUpdating = false
@@ -265,8 +269,10 @@ const initTheme = () => {
   applyTheme(preferDark ? 'dark' : 'light')
 }
 
-const prefersReducedMotion = () =>
-  typeof window !== 'undefined' && (window.matchMedia?.('(prefers-reduced-motion: reduce)')?.matches ?? false)
+const applyAnimationAvailability = () => {
+  canAnimate = animationEnabled.value && systemAllowsMotion
+  bookmarkMotionEnabled.value = canAnimate
+}
 
 const getThemeTransitionTargets = () => {
   return [hasBackgroundImage.value ? pageBackdropRef.value : null, contentRef.value].filter(Boolean)
@@ -280,7 +286,7 @@ const clearThemeTransitionState = () => {
 }
 
 const animateThemeToggle = (nextTheme) => {
-  if (prefersReducedMotion()) {
+  if (!canAnimate) {
     applyTheme(nextTheme)
     return
   }
@@ -401,16 +407,22 @@ const initActiveTab = () => {
   activeTab.value = localStorage.getItem(ACTIVE_TAB_KEY) || ''
 }
 
+const initAnimationPreference = () => {
+  animationEnabled.value = localStorage.getItem(ANIMATION_ENABLED_KEY) !== 'false'
+}
+
 const initMotionPreferences = () => {
   if (typeof window === 'undefined' || typeof window.matchMedia !== 'function') {
-    canAnimate = true
+    systemAllowsMotion = true
+    applyAnimationAvailability()
     motionMatcher = null
     return
   }
 
   const mediaQuery = window.matchMedia('(prefers-reduced-motion: reduce)')
   const updateMotionPreference = () => {
-    canAnimate = !mediaQuery.matches
+    systemAllowsMotion = !mediaQuery.matches
+    applyAnimationAvailability()
   }
 
   updateMotionPreference()
@@ -1575,6 +1587,31 @@ const closeContextMenu = () => {
   contextMenu.value = { visible: false, x: 0, y: 0, node: null }
 }
 
+const handleGlobalKeydown = (event) => {
+  if (event.key !== 'Escape') {
+    return
+  }
+
+  if (contextMenu.value.visible) {
+    closeContextMenu()
+    return
+  }
+
+  if (deletingNode.value) {
+    closeDeleteConfirm()
+    return
+  }
+
+  if (editingNode.value) {
+    closeEdit()
+    return
+  }
+
+  if (backgroundSettingsOpen.value) {
+    closeBackgroundSettings()
+  }
+}
+
 const handleContextRename = () => {
   if (!contextNode.value) return
   openEdit(contextNode.value)
@@ -1635,6 +1672,24 @@ watch(theme, () => {
   nextTick(() => updateTabHighlight({ immediate: true }))
 })
 
+watch(animationEnabled, (enabled) => {
+  localStorage.setItem(ANIMATION_ENABLED_KEY, String(enabled))
+  applyAnimationAvailability()
+
+  if (!canAnimate) {
+    clearThemeTransitionState()
+    resetIntroAnimationState()
+    resetBookmarkAnimationState()
+    resetDirectorySwitchAnimationState()
+    resetTabHighlightAnimationState()
+    clearAnimationTargets(getVisibleBookmarkTargets())
+    clearAnimationTargets([directoryViewRef.value, tabHighlightRef.value].filter(Boolean))
+  }
+
+  nextTick(syncTabButtonStates)
+  nextTick(() => updateTabHighlight({ immediate: true }))
+})
+
 watch(
   () => previewBackgroundSettings.value.tabRadius,
   () => {
@@ -1675,6 +1730,7 @@ watch(loading, (isLoading, wasLoading) => {
 })
 
 onMounted(() => {
+  initAnimationPreference()
   initMotionPreferences()
   initTheme()
   initMinimalMode()
@@ -1686,6 +1742,7 @@ onMounted(() => {
   window.addEventListener('resize', closeContextMenu)
   window.addEventListener('resize', updateTabHighlight)
   window.addEventListener('scroll', closeContextMenu, true)
+  window.addEventListener('keydown', handleGlobalKeydown)
 })
 
 onUnmounted(() => {
@@ -1702,6 +1759,7 @@ onUnmounted(() => {
   window.removeEventListener('resize', closeContextMenu)
   window.removeEventListener('resize', updateTabHighlight)
   window.removeEventListener('scroll', closeContextMenu, true)
+  window.removeEventListener('keydown', handleGlobalKeydown)
 })
 </script>
 
@@ -1787,6 +1845,7 @@ onUnmounted(() => {
             :depth="0"
             :minimal-mode="minimalMode"
             :card-layout="cardLayout"
+            :can-animate="bookmarkMotionEnabled"
             :active-drop-folder-id="activeDropFolderId"
             :can-move="canMoveNode"
             @drag-end="handleDragEnd"
@@ -1864,6 +1923,11 @@ onUnmounted(() => {
             <div class="settings-panel-header">
               <h4 class="settings-panel-title">样式调整</h4>
             </div>
+
+            <label class="background-switch">
+              <input v-model="animationEnabled" type="checkbox" />
+              <span>启用动效（自动跟随系统“减少动态效果”）</span>
+            </label>
 
             <label class="modal-field modal-field-range">
               <span>卡片透明度</span>

@@ -28,6 +28,10 @@ const props = defineProps({
     type: String,
     default: 'stacked'
   },
+  canAnimate: {
+    type: Boolean,
+    default: true
+  },
   activeDropFolderId: {
     type: [String, Number],
     default: ''
@@ -235,6 +239,8 @@ const omitMotionProps = (vars) => {
   return nextVars
 }
 
+const shouldAnimate = () => props.canAnimate
+
 const rememberHoverBase = (element) => {
   if (!element) {
     return null
@@ -280,7 +286,7 @@ const onBookmarkHoverEnter = (event) => {
       overwrite: 'auto'
     }
 
-    if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
+    if (!shouldAnimate()) {
       gsap.set(thumb, omitMotionProps(thumbHoverVars))
     } else {
       gsap.to(thumb, thumbHoverVars)
@@ -295,14 +301,14 @@ const onBookmarkHoverEnter = (event) => {
       overwrite: 'auto'
     }
 
-    if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
+    if (!shouldAnimate()) {
       gsap.set(text, omitMotionProps(textHoverVars))
     } else {
       gsap.to(text, textHoverVars)
     }
   }
 
-  if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
+  if (!shouldAnimate()) {
     gsap.set(element, omitMotionProps(elementHoverVars))
     return
   }
@@ -340,7 +346,7 @@ const onBookmarkHoverLeave = (event) => {
       clearProps: 'transform'
     }
 
-    if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
+    if (!shouldAnimate()) {
       gsap.set(thumb, omitMotionProps(thumbLeaveVars))
     } else {
       gsap.to(thumb, thumbLeaveVars)
@@ -356,14 +362,14 @@ const onBookmarkHoverLeave = (event) => {
       clearProps: 'transform'
     }
 
-    if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
+    if (!shouldAnimate()) {
       gsap.set(text, omitMotionProps(textLeaveVars))
     } else {
       gsap.to(text, textLeaveVars)
     }
   }
 
-  if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
+  if (!shouldAnimate()) {
     gsap.set(element, omitMotionProps(elementLeaveVars))
     return
   }
@@ -433,6 +439,7 @@ const forwardDragEnd = (event) => emit('drag-end', event)
             :depth="depth + 1"
             :minimal-mode="minimalMode"
             :card-layout="cardLayout"
+            :can-animate="canAnimate"
             :active-drop-folder-id="activeDropFolderId"
             :can-move="canMove"
             @drag-end="forwardDragEnd"
@@ -508,6 +515,7 @@ const forwardDragEnd = (event) => emit('drag-end', event)
         :depth="depth + 1"
         :minimal-mode="minimalMode"
         :card-layout="cardLayout"
+        :can-animate="canAnimate"
         :active-drop-folder-id="activeDropFolderId"
         :can-move="canMove"
         @drag-end="forwardDragEnd"
